@@ -259,7 +259,7 @@ def get_response_feedback(response_dict, collection_name):
     time_taken_ms = response_dict.get("time_taken_ms", -1)
     num_deleted = response_dict.get("mongo_response", {}).get("deleted_count", -1)
     
-    return "{:>13}: {:>8} entries deleted | took {:>6} ms".format(collection_name, time_taken_ms, num_deleted)
+    return "{:>13}: {:>8} entries deleted | took {:>6} ms".format(collection_name, num_deleted, time_taken_ms)
 
 # .....................................................................................................................
     

@@ -128,6 +128,12 @@ def sleep_until_tomorrow(hour_to_wake = 2, random_sleep_mins = 30):
     wake_offset_mins = (1.0 - unit_random()) * random_sleep_mins
     wake_dt = wake_dt + dt.timedelta(minutes = wake_offset_mins)
     
+    # Some feedback
+    nice_wake_dt_str = wake_dt.strftime("%Y/%m/%d %H:%M:%S")
+    print("",
+          "Sleeping until (roughly): {}".format(nice_wake_dt_str),
+          sep = "\n")
+    
     # Repeatedly check if we've passed our wake time, otherwise stay sleeping
     while True:
         check_dt = dt.datetime.now()
@@ -253,7 +259,7 @@ def get_response_feedback(response_dict, collection_name):
     time_taken_ms = response_dict.get("time_taken_ms", -1)
     num_deleted = response_dict.get("mongo_response", {}).get("deleted_count", -1)
     
-    return "{}: {} ms  /  {} entries deleted".format(collection_name, time_taken_ms, num_deleted)
+    return "{:>13}: {:>8} entries deleted | took {:>6} ms".format(collection_name, time_taken_ms, num_deleted)
 
 # .....................................................................................................................
     

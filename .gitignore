@@ -1,0 +1,7 @@
+
+# Project files
+# ...
+
+# Cache files
+*.pyc
+__pycache__

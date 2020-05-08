@@ -1,0 +1,5 @@
+
+# Library for GET/POST requests
+requests==2.*
+
+

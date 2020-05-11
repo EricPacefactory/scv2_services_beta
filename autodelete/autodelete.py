@@ -13,10 +13,11 @@ Created on Mon May  4 14:17:05 2020
 import requests
 import signal
 import argparse
-import datetime as dt
 
-from time import sleep
-from random import random as unit_random
+from time import sleep, perf_counter
+
+from local.lib.timekeeper_utils import get_human_readable_datetime_now_string, get_cutoff_timestamp
+from local.lib.timekeeper_utils import sleep_until_tomorrow
 
 from local.lib.environment import get_dbserver_protocol, get_dbserver_host, get_dbserver_port
 from local.lib.environment import get_days_to_keep, get_delete_on_startup, get_delete_once
@@ -48,25 +49,25 @@ def parse_autodelete_args():
     ap_obj.add_argument("-proto", "--protocol",
                         default = default_dbserver_protocol,
                         type = str,
-                        help = "\n".join(["Database server protocol", 
+                        help = "\n".join(["Database server protocol",
                                           "(Default: {})".format(default_dbserver_protocol)]))
     
     ap_obj.add_argument("-host", "--host",
                         default = default_dbserver_host,
                         type = str,
-                        help = "\n".join(["Database server host/ip address", 
+                        help = "\n".join(["Database server host/ip address",
                                           "(Default: {})".format(default_dbserver_host)]))
     
     ap_obj.add_argument("-port", "--port",
                         default = default_dbserver_port,
                         type = int,
-                        help = "\n".join(["Database server port", 
+                        help = "\n".join(["Database server port",
                                           "(Default: {})".format(default_dbserver_port)]))
     
     ap_obj.add_argument("-days", "--days_to_keep",
                         default = default_days_to_keep,
-                        type = int,
-                        help = "\n".join(["Number of days to keep, when requesting deletion", 
+                        type = float,
+                        help = "\n".join(["Number of days to keep, when requesting deletion",
                                           "(Default: {})".format(default_days_to_keep)]))
     
     ap_obj.add_argument("-on_start", "--delete_on_startup",
@@ -103,48 +104,6 @@ def sigterm_quit(signal_number, stack_frame):
     raise SystemExit
 
 # .....................................................................................................................
-
-def sleep_until_tomorrow(hour_to_wake = 2, random_sleep_mins = 30):
-    
-    '''
-    Function which pauses execution until the next day from when it was called.
-    Regularly wakes up to check if passed the wake timing
-    (rather than doing one long sleep, which is prone to timing drift errors)
-    '''
-    
-    # For clarity
-    one_hour_of_seconds = (60 * 60)
-    ten_mins_of_seconds = (10 * 60)
-    
-    # Generate the target datetime to wake from
-    current_datetime = dt.datetime.now()
-    tomorrow_dt = current_datetime + dt.timedelta(days = 1)
-    wake_dt = dt.datetime(year = tomorrow_dt.year,
-                          month = tomorrow_dt.month,
-                          day = tomorrow_dt.day,
-                          hour = hour_to_wake)
-    
-    # Add a random offset to the wake time, to help avoid synchronizing with other timers
-    wake_offset_mins = (1.0 - unit_random()) * random_sleep_mins
-    wake_dt = wake_dt + dt.timedelta(minutes = wake_offset_mins)
-    
-    # Some feedback
-    nice_wake_dt_str = wake_dt.strftime("%Y/%m/%d %H:%M:%S")
-    print("",
-          "Sleeping until (roughly): {}".format(nice_wake_dt_str),
-          sep = "\n")
-    
-    # Repeatedly check if we've passed our wake time, otherwise stay sleeping
-    while True:
-        check_dt = dt.datetime.now()
-        if check_dt > wake_dt:
-            break
-        random_seconds_of_sleep = (1.0 - unit_random()) * ten_mins_of_seconds
-        sleep(one_hour_of_seconds + random_seconds_of_sleep)
-    
-    return
-
-# .....................................................................................................................
 # .....................................................................................................................
 
 
@@ -168,10 +127,10 @@ def build_url(dbserver_url, *route_addons):
 
 # .....................................................................................................................
 
-def build_delete_url(dbserver_url, camera_select, collection_name, days_to_keep):
+def build_delete_url(dbserver_url, camera_select, deletion_timestamp_ms):
     
-    days_to_keep_int = int(days_to_keep)
-    delete_url = build_url(dbserver_url, camera_select, collection_name, "delete", "by-cutoff", days_to_keep_int)
+    deletion_timestamp_ms = int(round(deletion_timestamp_ms))
+    delete_url = build_url(dbserver_url, camera_select, "delete", "all-realtime", "by-cutoff", deletion_timestamp_ms)
     
     return delete_url
 
@@ -180,15 +139,7 @@ def build_delete_url(dbserver_url, camera_select, collection_name, days_to_keep)
     
 
 # ---------------------------------------------------------------------------------------------------------------------
-#%% Helper functions
-
-# .....................................................................................................................
-
-def get_collections_to_delete():
-    
-    ''' Helper function which hard-codes the collections that need to be called/deleted '''
-    
-    return ["camerainfo", "backgrounds", "snapshots", "objects"]
+#%% HTTP Request functions
 
 # .....................................................................................................................
 
@@ -208,13 +159,12 @@ def get_camera_names(dbserver_url):
         response_code = get_response.status_code
         response_success = (response_code == 200)
         if response_success:
-            # Convert json response data to python data type
             camera_names_list = get_response.json()
             
         else:
             # Feedback about bad responsess
             print("",
-                  get_human_readable_datetime_string(),
+                  get_human_readable_datetime_now_string(),
                   "Bad response getting camera names! ({})".format(response_code),
                   "@ {}".format(get_camera_names_url),
                   "",
@@ -224,7 +174,7 @@ def get_camera_names(dbserver_url):
     except Exception as err:
         # Try to fail gracefully in the case of unknown errors...
         print("",
-              get_human_readable_datetime_string(),
+              get_human_readable_datetime_now_string(),
               "Unknown error getting camera names!",
               "@ {}".format(get_camera_names_url),
               "",
@@ -235,36 +185,30 @@ def get_camera_names(dbserver_url):
 
 # .....................................................................................................................
 
-def get_response_feedback(response_dict, collection_name):
+def make_delete_request(delete_url, timeout_sec = 500):
     
-    '''
-    Helper function for creating deletion feedback 
-    Assumes responses formatted as follows (as an example):
-        {
-           "deletion_datetime":"2020-04-27 16:57:53",
-           "deletion_epoch_ms":1588021073069,
-           "time_taken_ms":1,
-           "mongo_response": {
-                                "acknowledged":true,
-                                "deleted_count":0,
-                                "raw_result": {
-                                                 "n":0,
-                                                 "ok":1.0
-                                              }
-                             }
-        }
-    '''
+    # Start timing
+    t_start = perf_counter()
     
-    # Pull out the raw data we want to print
-    time_taken_ms = response_dict.get("time_taken_ms", -1)
-    num_deleted = response_dict.get("mongo_response", {}).get("deleted_count", -1)
+    try:
+        # Make request to delete each collection
+        get_response = requests.get(delete_url, timeout = timeout_sec)
+        
+        # Handle response
+        response_code = get_response.status_code
+        response_success = (response_code == 200)
+        if not response_success:
+            print("Error: {} ({})".format(response_code, delete_url))
+        
+    except Exception as err:
+        # Try to fail gracefully in the case of unknown errors...
+        print("Unknown error: {}".format(err))
     
-    return "{:>13}: {:>8} entries deleted | took {:>6} ms".format(collection_name, num_deleted, time_taken_ms)
-
-# .....................................................................................................................
+    # End timing
+    t_end = perf_counter()
+    time_taken_ms = int(round(1000 * (t_end - t_start)))
     
-def get_human_readable_datetime_string():
-    return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return time_taken_ms
 
 # .....................................................................................................................
 # .....................................................................................................................
@@ -298,8 +242,8 @@ def check_server_connection(dbserver_url):
                   sep = "\n")
         
     except requests.ConnectionError as err:
-        print("", 
-              "Error connecting to server:", 
+        print("",
+              "Error connecting to server:",
               connection_str_for_errors,
               "",
               err,
@@ -330,7 +274,7 @@ def wait_for_server_connection(dbserver_url, mins_to_sleep_on_failure = 5):
         
         # Some feedback, then wait an try again
         print("",
-              get_human_readable_datetime_string(),
+              get_human_readable_datetime_now_string(),
               "Couldn't connect to server, though this worked in the past...",
               "@ {}".format(dbserver_url),
               "",
@@ -346,63 +290,21 @@ def wait_for_server_connection(dbserver_url, mins_to_sleep_on_failure = 5):
 # ---------------------------------------------------------------------------------------------------------------------
 #%% Deletion functions
 
-def make_delete_request(delete_url, camera_select, collection_name, timeout_sec = 500):
-    
-    # Initialize output
-    response_feedback_str = "..."
-    
-    try:
-        # Make request to delete each collection
-        get_response = requests.get(delete_url, timeout = timeout_sec)
-        
-        # Handle response
-        response_code = get_response.status_code
-        response_success = (response_code == 200)
-        if response_success:
-            # Get feedback about response
-            response_dict = get_response.json()
-            response_feedback_str = get_response_feedback(response_dict, collection_name)
-            
-        else:
-            # If we get a bad response code, just log it
-            response_feedback_str = "Error: {} ({})".format(response_code, collection_name)
-        
-    except Exception as err:
-        # Try to fail gracefully in the case of unknown errors...
-        response_feedback_str = "Unknown error: {}".format(collection_name)
-        print("",
-              get_human_readable_datetime_string(),
-              "Unknown error deleting {} for camera: {}".format(collection_name, camera_select),
-              "@ {}".format(delete_url),
-              "",
-              err,
-              sep = "\n")
-    
-    return response_feedback_str
-
 # .....................................................................................................................
 
-def delete_for_one_camera(dbserver_url, camera_select, days_to_keep,
-                          timeout_mins = 30):
+def delete_for_one_camera(dbserver_url, camera_select, deletion_timestamp_ms, timeout_mins = 30):
     
     # Calculate timeout value
     timeout_sec = (60 * timeout_mins)
     
-    # Build all the deletion urls needed to clear this camera
-    response_feedback_list = []
-    collections_list = get_collections_to_delete()
-    for each_collection in collections_list:
-        
-        # Build the url needed to trigger deletion for each collection
-        delete_url = build_delete_url(dbserver_url, camera_select, each_collection, days_to_keep)
-        response_str = make_delete_request(delete_url, camera_select, each_collection, timeout_sec)
-        response_feedback_list.append(response_str)
+    # Build the url to delete data for the given camera
+    delete_url = build_delete_url(dbserver_url, camera_select, deletion_timestamp_ms)
+    time_taken_ms = make_delete_request(delete_url, timeout_sec)
     
     # Print some feedback
     print("",
-          get_human_readable_datetime_string(),
-          "Deletion results: {}".format(camera_select),
-          "\n".join(response_feedback_list),
+          get_human_readable_datetime_now_string(),
+          "{} took {} ms".format(camera_select, time_taken_ms),
           sep = "\n")
     
     return
@@ -416,16 +318,19 @@ def delete_for_all_cameras(dbserver_url, days_to_keep):
     #       --> So it makes sense to wait for a reconnect on failure
     wait_for_server_connection(dbserver_url)
     
+    # Figure out deletion timestamp, which will be used for all cameras
+    deletion_timestamp_ms, deletion_cutoff_str = get_cutoff_timestamp(days_to_keep)
+    
     # Some feedback
     print("",
-          get_human_readable_datetime_string(),
-          "Deleting camera data...", 
+          get_human_readable_datetime_now_string(),
+          "Deleting camera data prior to {}".format(deletion_cutoff_str),
           sep = "\n")
     
     # Delete data for every camera
     camera_names_list = get_camera_names(dbserver_url)
     for each_camera_name in camera_names_list:
-        delete_for_one_camera(dbserver_url, each_camera_name, days_to_keep)
+        delete_for_one_camera(dbserver_url, each_camera_name, deletion_timestamp_ms)
     
     return
 
@@ -440,28 +345,25 @@ def scheduled_delete(dbserver_url, days_to_keep, delete_on_startup = False, run_
     delete_now = (delete_on_startup or run_once)
     if delete_now:
         delete_for_all_cameras(dbserver_url, days_to_keep)
-        
-    # Close early if needed
-    if run_once:
-        print("", "Deletion finished!", "  Closing...", sep = "\n")
-        return
     
+    # Sleep & delete & sleep & delete & sleep & ...
     try:
-        # Sleep & delete & sleep & delete & sleep & ...
-        while True:
+        run_forever = (not run_once)
+        while run_forever:
             sleep_until_tomorrow()
             delete_for_all_cameras(dbserver_url, days_to_keep)
-            
+        
+        # Provide some feedback, in case we don't loop forever
+        print("", "Deletion finished! Closing...", "", sep = "\n")
+        
     except KeyboardInterrupt:
-        print("", "Keyboard cancelled!", "  Closing...",
-              sep = "\n")
+        print("", "Keyboard cancelled! Closing...", "", sep = "\n")
         
     except SystemExit:
-        # Catch SIGTERM signals
+        # Catch SIGTERM signals, triggered by sigterm_quit function
         print("",
-              get_human_readable_datetime_string(),
-              "  Kill signal received!", "  Closing...",
-              sep = "\n")
+              get_human_readable_datetime_now_string(),
+              "  Kill signal received! Closing...", "", sep = "\n")
     
     return
 
@@ -471,7 +373,7 @@ def scheduled_delete(dbserver_url, days_to_keep, delete_on_startup = False, run_
 
 # ---------------------------------------------------------------------------------------------------------------------
 #%% Get configuration
-    
+
 ap_result = parse_autodelete_args()
 
 # Build dbserver url from script args
@@ -487,7 +389,7 @@ delete_once = ap_result["delete_once"]
 
 # Print some feedback about configuration
 print("",
-      get_human_readable_datetime_string(),
+      get_human_readable_datetime_now_string(),
       "Running autodeletion",
       "         server url: {}".format(dbserver_url),
       "       days to keep: {}".format(days_to_keep),
@@ -503,7 +405,7 @@ print("",
 server_is_alive = check_server_connection(dbserver_url)
 if not server_is_alive:
     print("",
-          get_human_readable_datetime_string(),
+          get_human_readable_datetime_now_string(),
           "Failed to connect to server on startup!",
           "@ {}".format(dbserver_url),
           "",
@@ -518,17 +420,8 @@ scheduled_delete(dbserver_url, days_to_keep, delete_on_startup, delete_once)
 
 # ---------------------------------------------------------------------------------------------------------------------
 #%% Scrap
-'''
-STOPPED HERE
-- NEED TO CHECK ON AUTODELETE IN CONTAINER, WHY DOES CONNECTION FAIL?
-- THEN TRY AT MAPLE & IF NO IMMEDIATE ISSUES, MODATEK?
-- THEN WORK ON ADDING BETTER DELETION ROUTES TO DBSERVER
-- ALSO ADD TO GIT/GITHUB
-'''
+
 # TODO
-# - add better deletion routing to dbserver...
-#   - should ideally be a single route that handles all deletions
-#   - maybe two routes? One by cut-off, another by timestamp???
-# - should organize deletion routes into separate route file on dbserver as well...
-# - dbserver could also record deletion event + metadata back into the db!
-# - should add /<camera_select>/server-logs/<log_type>/... route to be able to retreve logs! Could also log posting...
+# - add hard-drive capacity based deletion setting
+#   - likely requires adding more info to dbserver to query how much space each day takes up
+

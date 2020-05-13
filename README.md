@@ -20,31 +20,31 @@ Many services will have environment variables that can be used to alter the beha
 
 See each of the listed services and their corresponding environment variables for more info. Note that these entries can't just be added to the end of the run commands. A good place for them is after the `-d` flag, usually found in every run command.
 
-
-
 ---
 
 ## autodelete
 
 A script for automatically deleting files off of the database on a regular (daily) interval.
 
-#### Build:
+#### Docker Build:
 
-From outside the autodelete folder (i.e. the same location as this README file):
+From inside the autodelete folder:
 
-`sudo docker build -t autodelete_image -f ./autodelete/build/docker/Dockerfile ./autodelete``
+`docker build -t services_autodelete_image -f ./build/docker/Dockerfile .`
 
-This command will create a docker image (called `autodelete_image`) with all dependencies installed. Note that this image requires the pybase image (currently located in the deployment repo!)
+This command will create a docker image (called `services_autodelete_image`) with all dependencies installed.
 
-#### Run:
+#### Docker Run:
 
 From anywhere:
 
-`sudo docker run -d --network="host" --name autodelete_container autodelete_image`
+`docker run -d --network="host" --name services_autodelete services_autodelete_image`
 
-This command will start up the autodeletion container. Note that the dbserver container should be running before starting the autodeletion container, as it will attempt to connect to the dbserver on startup (and close immediately if it fails!).
+This command will start up a container running the autodelete service. Note that the dbserver container should be running before starting the autodeletion container, as it will attempt to connect to the dbserver on startup (and close immediately if it fails!).
 
 #### Environment variables:
+
+`DBSERVER_PROTOCOL` = http
 
 `DBSERVER_HOST` = localhost
 

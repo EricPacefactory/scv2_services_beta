@@ -240,8 +240,6 @@ def save_all_jpgs(save_folder_path, camera_select, snapshot_ems_list):
     # Save a jpg for each of the provided epoch ms values
     for each_idx, each_snap_ems in enumerate(snapshot_ems_list):
         
-        print(each_idx, each_snap_ems)
-            
         # Request image data from dbserver
         image_data = get_snapshot_image_data(camera_select, each_snap_ems)
         if image_data is None:
@@ -460,8 +458,8 @@ if __name__ == "__main__":
     # Check connection to the dbserver
     dbserver_is_connected = check_server_connection(DBSERVER_URL)
     if not dbserver_is_connected:
-        print("", 
-              "No connection to dbserver!", 
+        print("",
+              "No connection to dbserver!",
               "@ {}".format(DBSERVER_URL),
               sep = "\n")
         quit()

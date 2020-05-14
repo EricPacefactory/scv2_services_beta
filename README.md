@@ -58,6 +58,46 @@ This command will start up a container running the autodelete service. Note that
 
 ---
 
+## gifwrapper
+
+A script for generating GIF files. Provides a simple set of urls to specify GIF request.
+
+Docker Build:
+
+From inside the gifwrapper folder:
+
+`docker build -t services_gifwrapper_image -f ./build/docker/Dockerfile .`
+
+This command will create a docker image (called `services_gifwrapper_image`) with all dependencies installed.
+
+#### Docker Run:
+
+From anywhere:
+
+`docker run -d --network="host" --name services_gifwrapper services_gifwrapper_image`
+
+This command will start up a container running the gifwrapper service. Note that the dbserver container should be running before starting the gifwrapper container, as it will attempt to connect to the dbserver on startup (and close immediately if it fails!).
+
+#### Environment variables:
+
+`GIFSERVER_PROTOCOL` = http
+
+`GIFSERVER_HOST` = 0.0.0.0
+
+`GIFSERVER_PORT` = 7171
+
+`DBSERVER_PROTOCOL` = http
+
+`DBSERVER_HOST` = localhost
+
+`DBSERVER_PORT` = 8050
+
+`DEFAULT_DELAY_MS` = 150
+
+`DEFAULT_MAX_FRAME_SIZE_PX` = 480
+
+---
+
 ## classifier
 
 (to be completed)

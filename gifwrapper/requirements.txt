@@ -1,0 +1,10 @@
+
+# Library for GET/POST requests
+requests==2.*
+
+# Simple web framework
+Flask==1.*
+Flask-Cors==3.*
+
+# Simple web server for flask
+waitress==1.*

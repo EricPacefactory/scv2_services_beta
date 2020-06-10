@@ -16,7 +16,7 @@ ENV DBSERVER_HOST                   localhost
 ENV DBSERVER_PORT                   8050
 
 # Set variables for deletion
-ENV DAYS_TO_KEEP                    5
+ENV DAYS_TO_KEEP                    1
 ENV DELETE_ON_STARTUP               0
 ENV DELETE_ONCE                     0
 
@@ -45,7 +45,7 @@ CMD ["python3", "-u", "autodelete.py"]
 # -----------------------------------------------------------------------------
 # To use manually:
 
-# From outside autodelete project directory:
-# sudo docker build -t autodelete_image -f ./autodelete/build/docker/Dockerfile ./autodelete
-# sudo docker run -d --network="host" --name autodelete_container autodelete_image
+# From inside the autodelete project directory:
+# sudo docker build -t services_autodelete_image -f ./build/docker/Dockerfile .
+# sudo docker run -d -e DAYS_TO_KEEP=1 --network="host" --name autodelete_container services_autodelete_image
 

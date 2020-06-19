@@ -8,6 +8,9 @@ FROM pacefactory/scv2_ubuntupython_base:1.0.0
 # -----------------------------------------------------------------------------
 #%% Install system requirements
 
+# Update repo records
+RUN apt-get update --quiet
+
 # Install GIF making utility
 RUN apt-get install --quiet --assume-yes \
 imagemagick

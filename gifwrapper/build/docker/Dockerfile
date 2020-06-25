@@ -8,12 +8,10 @@ FROM pacefactory/scv2_ubuntupython_base:1.0.0
 # -----------------------------------------------------------------------------
 #%% Install system requirements
 
-# Update repo records
-RUN apt-get update --quiet
-
-# Install GIF making utility
-RUN apt-get install --quiet --assume-yes \
-imagemagick
+# Update repo records & install GIF making utility
+RUN apt-get update && \
+    apt-get install --quiet --assume-yes --no-install-recommends \
+    imagemagick
 
 
 # -----------------------------------------------------------------------------
@@ -23,8 +21,8 @@ imagemagick
 ENV HOME                            /home/scv2
 
 # Set variables for setting up the gif making server
-ENV GIFSERVER_HOST                      0.0.0.0
-ENV GIFSERVER_PORT                      7171
+ENV GIFSERVER_HOST                  0.0.0.0
+ENV GIFSERVER_PORT                  7171
 
 # Set variables for accessing the database server
 ENV DBSERVER_HOST                   localhost
@@ -53,13 +51,13 @@ RUN pip3 install -r $HOME/gifwrapper/requirements.txt
 COPY . .
 
 # Run the gif making server script! This is a blocking call...
-CMD ["python3", "-u", "gifwrapper.py"]
+ENTRYPOINT ["sh", "docker_entrypoint.sh"]
 
 
 # -----------------------------------------------------------------------------
 # To use manually:
 
-# From outside gifwrapper project directory:
-# sudo docker build -t services_gifwrapper_image -f ./gifwrapper/build/docker/Dockerfile ./gifwrapper
+# From the gifwrapper project root directory:
+# sudo docker build -t services_gifwrapper_image -f ./build/docker/Dockerfile .
 # sudo docker run -d --network="host" --name services_gifwrapper services_gifwrapper_image
 

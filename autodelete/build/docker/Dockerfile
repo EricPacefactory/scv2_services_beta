@@ -39,7 +39,7 @@ RUN pip3 install -r $HOME/autodelete/requirements.txt
 COPY . .
 
 # Run the autodeletion script! This is a blocking call...
-CMD ["python3", "-u", "autodelete.py"]
+ENTRYPOINT ["sh", "docker_entrypoint.sh"]
 
 
 # -----------------------------------------------------------------------------

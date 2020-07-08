@@ -2,7 +2,7 @@
 #%% Base setup
 
 # Start with ubuntu-python base
-FROM pacefactory/scv2_ubuntupython_base:1.0.0
+FROM pacefactory/scv2_ubuntupython_base:1.0.1
 
 
 # -----------------------------------------------------------------------------
@@ -57,7 +57,7 @@ ENTRYPOINT ["sh", "docker_entrypoint.sh"]
 # -----------------------------------------------------------------------------
 # To use manually:
 
-# From the gifwrapper project root directory:
-# sudo docker build -t services_gifwrapper_image -f ./build/docker/Dockerfile .
-# sudo docker run -d --network="host" --name services_gifwrapper services_gifwrapper_image
+# From the gifwrapper root project directory:
+# docker build -t services_gifwrapper_image -f ./build/docker/Dockerfile .
+# docker run -d --network="host" --name services_gifwrapper services_gifwrapper_image
 

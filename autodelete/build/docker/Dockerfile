@@ -2,7 +2,7 @@
 #%% Base setup
 
 # Start with ubuntu-python base
-FROM pacefactory/scv2_ubuntupython_base:1.0.0
+FROM pacefactory/scv2_ubuntupython_base:1.0.1
 
 
 # -----------------------------------------------------------------------------
@@ -45,7 +45,7 @@ ENTRYPOINT ["sh", "docker_entrypoint.sh"]
 # -----------------------------------------------------------------------------
 # To use manually:
 
-# From inside the autodelete project directory:
-# sudo docker build -t services_autodelete_image -f ./build/docker/Dockerfile .
-# sudo docker run -d -e DAYS_TO_KEEP=1 --network="host" --name autodelete_container services_autodelete_image
+# From the autodelete root project directory:
+# docker build -t services_autodelete_image -f ./build/docker/Dockerfile .
+# docker run -d -e DAYS_TO_KEEP=1 --network="host" --name autodelete_container services_autodelete_image
 

@@ -50,8 +50,11 @@ RUN pip3 install -r $HOME/gifwrapper/requirements.txt
 # Move system files into the image
 COPY . .
 
+# Make sure the entrypoint script is executable
+RUN chmod +x docker_entrypoint.sh
+
 # Run the gif making server script! This is a blocking call...
-ENTRYPOINT ["sh", "docker_entrypoint.sh"]
+ENTRYPOINT ["./docker_entrypoint.sh"]
 
 
 # -----------------------------------------------------------------------------

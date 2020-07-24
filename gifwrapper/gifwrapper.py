@@ -13,6 +13,7 @@ Created on Thu May 14 11:43:55 2020
 import os
 import requests
 import subprocess
+import signal
 
 from tempfile import TemporaryDirectory
 
@@ -78,6 +79,21 @@ def get_default_delay_ms():
 
 def get_default_max_frame_size_px():
     return int(os.environ.get("DEFAULT_MAX_FRAME_SIZE_PX", 480))
+
+# .....................................................................................................................
+
+def register_waitress_shutdown_command():
+    
+    ''' Awkward hack to get waitress server to close on SIGTERM signals '''
+    
+    def convert_sigterm_to_keyboard_interrupt(signal_number, stack_frame):
+        print("", "", "*" * 48, "Kill signal received! ({})".format(signal_number), "*" * 48, "", sep = "\n")
+        raise KeyboardInterrupt
+    
+    # Replaces SIGTERM signals with a Keyboard interrupt, which the server will handle properly
+    signal.signal(signal.SIGTERM, convert_sigterm_to_keyboard_interrupt)
+    
+    return
 
 # .....................................................................................................................
 # .....................................................................................................................
@@ -466,6 +482,7 @@ if __name__ == "__main__":
     
     # Launch server
     if not using_spyder_ide():
+        register_waitress_shutdown_command()
         print("")
         wsgi_serve(wsgi_app, host = gifserver_host, port = gifserver_port, url_scheme = gifserver_protocol)
 

@@ -12,12 +12,16 @@ Created on Thu May 14 11:43:55 2020
 
 import os
 import requests
-import subprocess
 import signal
+
+import cv2
+import numpy as np
 
 from tempfile import TemporaryDirectory
 
 from waitress import serve as wsgi_serve
+
+from moviepy.editor import ImageSequenceClip
 
 from flask import Flask, send_file, jsonify
 from flask import request as flask_request
@@ -72,13 +76,13 @@ def get_dbserver_port():
 
 # .....................................................................................................................
 
-def get_default_delay_ms():
-    return int(os.environ.get("DEFAULT_DELAY_MS", 150))
+def get_default_fps():
+    return int(os.environ.get("DEFAULT_FPS", 8))
 
 # .....................................................................................................................
 
-def get_default_max_frame_size_px():
-    return int(os.environ.get("DEFAULT_MAX_FRAME_SIZE_PX", 480))
+def get_default_frame_width():
+    return int(os.environ.get("DEFAULT_FRAME_WIDTH_PX", 480))
 
 # .....................................................................................................................
 
@@ -126,6 +130,15 @@ def build_snap_image_url(camera_select, snapshot_epoch_ms):
     ''' Helper function for generating urls to download snapshot image data '''
     
     return build_dbserver_url(camera_select, "snapshots", "get-one-image", "by-ems", str(snapshot_epoch_ms))
+
+# .....................................................................................................................
+
+def build_bg_image_url(camera_select, target_epoch_ms):
+    
+    ''' Helper function for generating urls to download background image data '''
+    
+    ems_str = str(target_epoch_ms)
+    return build_dbserver_url(camera_select, "backgrounds", "get-active-image", "by-time-target", ems_str)
 
 # .....................................................................................................................
 # .....................................................................................................................
@@ -199,7 +212,7 @@ def get_snapshot_ems_list(camera_select, start_ems, end_ems):
 def get_snapshot_image_data(camera_select, snapshot_epoch_ms):
     
     # Initialize output
-    image_data = None
+    image_bytes = None
     
     # Build the request url & make the request
     image_request_url = build_snap_image_url(camera_select, snapshot_epoch_ms)
@@ -208,9 +221,27 @@ def get_snapshot_image_data(camera_select, snapshot_epoch_ms):
     # Only return the response data if the response was ok
     response_success = (dbserver_response.status_code == 200)
     if response_success:
-        image_data = dbserver_response.content
+        image_bytes = dbserver_response.content
     
-    return image_data
+    return image_bytes
+
+# .....................................................................................................................
+
+def get_background_image_data(camera_select, target_epoch_ms):
+    
+    # Initialize output
+    image_bytes = None
+    
+    # Build the request url & make the request
+    image_request_url = build_bg_image_url(camera_select, target_epoch_ms)
+    dbserver_response = requests.get(image_request_url)
+    
+    # Only return the response data if the response was ok
+    response_success = (dbserver_response.status_code == 200)
+    if response_success:
+        image_bytes = dbserver_response.content
+    
+    return image_bytes
 
 # .....................................................................................................................
 
@@ -237,6 +268,87 @@ def error_response(error_message, status_code = 500):
 
 # .....................................................................................................................
 
+def pixelate(frame, output_wh, pixelation_factor = 1):
+    
+    ''' Helper function which pixelates images '''
+    
+    # Don't do anything with zero or less factors
+    if pixelation_factor < 1:
+        return frame
+    
+    # Shrink then scale back up (with nearest-neighbor interp) to get pixelated look
+    scale_factor = 1 / (1 + pixelation_factor)
+    shrunk_frame = cv2.resize(frame, dsize = None,
+                              fx = scale_factor, fy = scale_factor,
+                              interpolation = cv2.INTER_AREA)
+    
+    return cv2.resize(shrunk_frame, dsize = output_wh, interpolation = cv2.INTER_NEAREST)
+
+# .....................................................................................................................
+
+def image_bytes_to_pixels(image_bytes):
+    
+    ''' Helper function which convert raw image byte data to an actual iamge (represented as pixels) '''
+    
+    image_array = np.frombuffer(image_bytes, dtype = np.uint8)
+    image_pixel_data = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+    
+    return image_pixel_data
+
+# .....................................................................................................................
+
+def image_pixels_to_bytes(image_pixel_data, jpg_quality_0_to_100 = 50):
+    
+    ''' Helper function which convert image data into byte data for saving '''
+    
+    jpg_params = (cv2.IMWRITE_JPEG_QUALITY, jpg_quality_0_to_100)
+    _, image_bytes = cv2.imencode(".jpg", image_pixel_data, jpg_params)
+    
+    return image_bytes
+
+# .....................................................................................................................
+
+def apply_ghosting(background_image_bytes, frame_bytes,
+                   brightness_scaling = 1.5, blur_size = 2, pixelation_factor = 3):
+    
+    # Bail on missing data
+    if background_image_bytes is None:
+        return np.zeros_like(frame_bytes)
+    if frame_bytes is None:
+        return background_image_bytes
+    
+    # Convert byte-data to actual pixels we can manipulate
+    background_image = image_bytes_to_pixels(background_image_bytes)
+    frame = image_bytes_to_pixels(frame_bytes)
+    
+    # Get frame sizing so we can scale the background image appropriately
+    frame_height, frame_width = frame.shape[0:2]
+    frame_wh = (frame_width, frame_height)
+    scaled_bg = cv2.resize(background_image, dsize = frame_wh, interpolation = cv2.INTER_AREA)
+    
+    # Get frame difference
+    frame_difference_3ch = cv2.absdiff(scaled_bg, frame)
+    frame_difference_1ch = cv2.cvtColor(frame_difference_3ch, cv2.COLOR_BGR2GRAY)
+    
+    # If needed, blur to further 'censor' the ghosted result
+    if blur_size > 0:
+        blur_size_odd = 1 + (2 * blur_size)
+        blur_kernel_size = (blur_size_odd, blur_size_odd)
+        frame_difference_1ch = cv2.blur(frame_difference_1ch, blur_kernel_size)
+    
+    # Pixelate the ghosted component if needed
+    if pixelation_factor > 0:
+        frame_difference_1ch = pixelate(frame_difference_1ch, frame_wh, pixelation_factor)
+    
+    # Combine difference with background & convert back to byte data for final output
+    frame_difference_3ch = cv2.cvtColor(frame_difference_1ch, cv2.COLOR_GRAY2BGR)
+    ghosted_frame = cv2.addWeighted(scaled_bg, 1.0, frame_difference_3ch, brightness_scaling, 0.0)
+    ghosted_frame_bytes = image_pixels_to_bytes(ghosted_frame)
+    
+    return ghosted_frame_bytes
+
+# .....................................................................................................................
+
 def save_one_jpg(save_folder_path, image_ems, image_data):
     
     # Build the file name with the right extension and enough (left-sided) zero padding to avoid ordering errors
@@ -251,18 +363,35 @@ def save_one_jpg(save_folder_path, image_ems, image_data):
 
 # .....................................................................................................................
 
-def save_all_jpgs(save_folder_path, camera_select, snapshot_ems_list):
+def save_all_jpgs(save_folder_path, camera_select, snapshot_ems_list, ghosting_config_dict):
+    
+    # Get ghosting parameters
+    enable_ghosting = ghosting_config_dict.get("enable_ghosting", False)
+    brightness_factor = ghosting_config_dict.get("brightness_factor", 1.5)
+    blur_size = ghosting_config_dict.get("blur_size", 2)
+    pixelation_factor = ghosting_config_dict.get("pixelation_factor", 3)
+    
+    # Grab a background image if we're ghosting
+    bg_bytes = None
+    if enable_ghosting:
+        latest_snap_ems = snapshot_ems_list[-1]
+        bg_bytes = get_background_image_data(camera_select, latest_snap_ems)
     
     # Save a jpg for each of the provided epoch ms values
     for each_idx, each_snap_ems in enumerate(snapshot_ems_list):
         
         # Request image data from dbserver
-        image_data = get_snapshot_image_data(camera_select, each_snap_ems)
-        if image_data is None:
+        snap_bytes = get_snapshot_image_data(camera_select, each_snap_ems)
+        if snap_bytes is None:
             continue
         
+        # Apply ghosting if needed
+        if enable_ghosting:
+            snap_bytes = apply_ghosting(bg_bytes, snap_bytes,
+                                        brightness_factor, blur_size, pixelation_factor)
+        
         # Save the jpegs!
-        save_one_jpg(save_folder_path, each_idx, image_data)
+        save_one_jpg(save_folder_path, each_idx, snap_bytes)
         
     # Finally, get the number of files saved, for sanity checks
     num_files_saved = len(os.listdir(save_folder_path))
@@ -271,38 +400,30 @@ def save_all_jpgs(save_folder_path, camera_select, snapshot_ems_list):
 
 # .....................................................................................................................
 
-def create_gif(save_folder_path, gif_delay, frame_size):
+def create_gif(save_folder_path, frame_rate, frame_width):
+    
+    # Make sure the frame rate isn't silly
+    frame_rate = min(30, max(0.5, frame_rate))
     
     # Build output name & pathing
     output_file_name = "temp.gif"
     path_to_output = os.path.join(save_folder_path, output_file_name)
     
-    # Create resize command
-    resize_cmd = "{:.0f}>".format(frame_size)
-    
-    # Build pathing to input images & run gif creation
-    path_to_input_jpgs = os.path.join(save_folder_path, "*.jpg")
-    run_command_list = ["convert",
-                        "-delay", str(gif_delay),
-                        "-resize", resize_cmd,
-                        path_to_input_jpgs,
-                        path_to_output]
-    subprocess.run(run_command_list)
+    # Build gif output
+    gif_frames = ImageSequenceClip(save_folder_path, fps = frame_rate)
+    gif_frames.resize(width = frame_width).write_gif(path_to_output, tempfiles = True)
     
     return path_to_output
 
 # .....................................................................................................................
 
-def get_gif_response(camera_select, snapshot_ems_list, delay_ms, max_frame_size_px):
-    
-    # Convert delay value to 1/100th of a second, which gif creation program uses...
-    gif_delay = int(round(delay_ms / 10))
+def create_gif_response(camera_select, snapshot_ems_list, frame_rate, frame_width, ghosting_config_dict):
     
     # Download each of the snapshot images to a temporary folder
     with TemporaryDirectory() as temp_dir:
         
         # Get all jpg data from the dbserver
-        num_jpgs = save_all_jpgs(temp_dir, camera_select, snapshot_ems_list)
+        num_jpgs = save_all_jpgs(temp_dir, camera_select, snapshot_ems_list, ghosting_config_dict)
         
         # Assuming we have jpgs, create the gif and process as a file to send back to the user
         no_jpgs = (num_jpgs == 0)
@@ -311,7 +432,7 @@ def get_gif_response(camera_select, snapshot_ems_list, delay_ms, max_frame_size_
             gif_response = error_response(error_msg, status_code = 500)
             
         else:
-            path_to_gif = create_gif(temp_dir, gif_delay, max_frame_size_px)
+            path_to_gif = create_gif(temp_dir, frame_rate, frame_width)
             user_file_name = "output.gif"
             gif_response = send_file(path_to_gif,
                                      attachment_filename = user_file_name,
@@ -319,6 +440,49 @@ def get_gif_response(camera_select, snapshot_ems_list, delay_ms, max_frame_size_
                                      as_attachment = True)
     
     return gif_response
+
+# .....................................................................................................................
+
+def create_video(save_folder_path, file_ext, frame_rate, frame_width):
+    
+    # Make sure the frame rate isn't silly
+    frame_rate = min(30, max(0.5, frame_rate))
+    
+    # Build output name & pathing
+    output_file_name = "temp.{}".format(file_ext)
+    path_to_output = os.path.join(save_folder_path, output_file_name)
+    
+    # Build gif output
+    video_frames = ImageSequenceClip(save_folder_path, fps = frame_rate)
+    video_frames.resize(width = frame_width).write_videofile(path_to_output, audio = False)
+    
+    return path_to_output
+
+# .....................................................................................................................
+
+def create_video_response(camera_select, snapshot_ems_list, file_ext, frame_rate, frame_width, ghosting_config_dict):
+    
+    # Download each of the snapshot images to a temporary folder
+    with TemporaryDirectory() as temp_dir:
+        
+        # Get all jpg data from the dbserver
+        num_jpgs = save_all_jpgs(temp_dir, camera_select, snapshot_ems_list, ghosting_config_dict)
+        
+        # Assuming we have jpgs, create the video and process as a file to send back to the user
+        no_jpgs = (num_jpgs == 0)
+        if no_jpgs:
+            error_msg = "Could not retrieve jpgs from target snapshot epoch times"
+            video_response = error_response(error_msg, status_code = 500)
+            
+        else:
+            path_to_video = create_video(temp_dir, file_ext, frame_rate, frame_width)
+            user_file_name = "output.{}".format(file_ext)
+            video_response = send_file(path_to_video,
+                                       attachment_filename = user_file_name,
+                                       mimetype = "video/{}".format(file_ext),
+                                       as_attachment = True)
+    
+    return video_response
 
 # .....................................................................................................................
 # .....................................................................................................................
@@ -390,12 +554,20 @@ def help_route():
 
 # .....................................................................................................................
 
-@wsgi_app.route("/<string:camera_select>/simple-replay/<int:start_ems>/<int:end_ems>")
-def gif_simple_replay_route(camera_select, start_ems, end_ems):
+@wsgi_app.route("/<string:camera_select>/simple-replay/<string:file_ext>/<enable_ghosting>/<int:start_ems>/<int:end_ems>")
+def simple_replay_route(camera_select, file_ext, enable_ghosting, start_ems, end_ems):
+    
+    # Interpret ghosting flag
+    enable_ghosting_str = str(enable_ghosting)
+    enable_ghosting_bool = (enable_ghosting_str.lower() in {"1", "true", "on", "enable"})
+    ghost_config_dict = {"enable_ghosting": enable_ghosting_bool,
+                         "brightness_factor": 1.5,
+                         "blur_size": 2,
+                         "pixelation_factor": 3}
     
     # Use default timing & sizing for simple replay route
-    delay_ms = get_default_delay_ms()
-    max_frame_size_px = get_default_max_frame_size_px()
+    frame_rate = get_default_fps()
+    frame_width_px = get_default_frame_width()
     
     # Request snapshot timing info from dbserver
     snap_ems_list = get_snapshot_ems_list(camera_select, start_ems, end_ems)
@@ -407,18 +579,29 @@ def gif_simple_replay_route(camera_select, start_ems, end_ems):
     # Make sure snapshot times are ordered!
     snap_ems_list = sorted(snap_ems_list)
     
-    return get_gif_response(camera_select, snap_ems_list, delay_ms, max_frame_size_px)
+    # Decide on output format
+    safe_ext = str(file_ext).replace(".", "").lower()
+    is_gif = (safe_ext == "gif")
+    if is_gif:
+        return create_gif_response(camera_select, snap_ems_list, frame_rate, frame_width_px, ghost_config_dict)
+    
+    return create_video_response(camera_select, snap_ems_list, safe_ext, frame_rate, frame_width_px, ghost_config_dict)
 
 # .....................................................................................................................
 
 @wsgi_app.route("/<string:camera_select>/specific-replay", methods = ["GET", "POST"])
-def gif_specific_replay_route(camera_select):
+def specific_replay_route(camera_select):
     
     # If using a GET request, return some info for how to use POST route
     if flask_request.method == "GET":
-        post_args_dict = {"delay_ms": "The delay between frames (in milliseconds) of the output animation",
-                          "max_frame_size_px": "The maximum frame dimension of the output animation",
-                          "snapshot_ems_list": "A list of the snapshot epoch ms values to render into a gif"}
+        post_args_dict = {"frame_rate": "Number of frames displayed per second of animation",
+                          "frame_width_px": "The width of the output animation (height scales proportionally)",
+                          "snapshot_ems_list": "A list of the snapshot epoch ms values to render into a animation",
+                          "file_ext": "Output file extension. Can be gif or mp4 for example",
+                          "enable_ghosting": "If true, all frames will be ghosted prior to rendering the animation",
+                          "ghost_brightness_factor": "A brightness scaling factor for ghosting (should be > 1.0)",
+                          "ghost_blur_size": "Controls how much blurring occurs on ghosted images",
+                          "ghost_pixelation_factor": "Controls pixelation applied to ghosted images"}
         
         return json_response(post_args_dict, status_code = 200)
     
@@ -433,8 +616,17 @@ def gif_specific_replay_route(camera_select):
     
     # Parse the post args
     snap_ems_list = post_args_dict.get("snapshot_ems_list", [])
-    delay_ms = post_args_dict.get("delay_ms", get_default_delay_ms())
-    max_frame_size_px = post_args_dict.get("max_frame_size_px", get_default_max_frame_size_px())
+    frame_rate = post_args_dict.get("frame_rate", get_default_fps())
+    frame_width_px = post_args_dict.get("frame_width_px", get_default_frame_width())
+    file_ext = post_args_dict.get("file_ext", "gif")
+    enable_ghosting = post_args_dict.get("enable_ghosting", False)
+    ghost_brightness_factor = post_args_dict.get("ghost_brightness_factor", 1.5)
+    ghost_blur_size = post_args_dict.get("ghost_blur_size", 2)
+    ghost_pixelation_factor = post_args_dict.get("ghost_pixelation_factor", 3)
+    ghost_config_dict = {"enable_ghosting": enable_ghosting,
+                         "brightness_factor": ghost_brightness_factor,
+                         "blur_size": ghost_blur_size,
+                         "pixelation_factor": ghost_pixelation_factor}
     
     # Check for errors providing snapshot times
     bad_snap_ems_list = (type(snap_ems_list) not in {list, tuple})
@@ -449,13 +641,16 @@ def gif_specific_replay_route(camera_select):
         error_msg = "No snapshot epoch ms values were provided!"
         return error_response(error_msg, status_code = 400)
     
-    # Make sure delay is reasonable
-    delay_ms = max(5, int(delay_ms))
-    
     # Make sure frame size is reasonable
-    max_frame_size_px = max(10, int(max_frame_size_px))
+    frame_width_px = max(10, int(frame_width_px))
     
-    return get_gif_response(camera_select, snap_ems_list, delay_ms, max_frame_size_px)
+    # Decide on output format
+    safe_ext = str(file_ext).replace(".", "").lower()
+    is_gif = (safe_ext == "gif")
+    if is_gif:
+        return create_gif_response(camera_select, snap_ems_list, frame_rate, frame_width_px, ghost_config_dict)
+    
+    return create_video_response(camera_select, snap_ems_list, safe_ext, frame_rate, frame_width_px, ghost_config_dict)
 
 # .....................................................................................................................
 # .....................................................................................................................

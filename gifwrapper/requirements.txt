@@ -1,4 +1,11 @@
 
+# CV & Math libraries
+numpy==1.*
+opencv-python-headless==4.*
+
+# GIF/Video making library
+moviepy==1.*
+
 # Library for GET/POST requests
 requests==2.*
 

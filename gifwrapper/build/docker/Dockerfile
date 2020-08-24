@@ -2,16 +2,16 @@
 #%% Base setup
 
 # Start with ubuntu-python base
-FROM pacefactory/scv2_ubuntupython_base:1.0.1
+FROM pacefactory/scv2_ubuntupython_base:1.0.2
 
 
 # -----------------------------------------------------------------------------
-#%% Install system requirements
+#%% Setup python requirements
 
-# Update repo records & install GIF making utility
-RUN apt-get update && \
-    apt-get install --quiet --assume-yes --no-install-recommends \
-    imagemagick
+# Install python requirements
+COPY requirements.txt /tmp/scv2/requirements.txt
+RUN python3 -m pip install --upgrade pip && \
+    python3 -m pip install -r /tmp/scv2/requirements.txt
 
 
 # -----------------------------------------------------------------------------
@@ -29,23 +29,15 @@ ENV DBSERVER_HOST                   localhost
 ENV DBSERVER_PORT                   8050
 
 # Set variables for default gif making behavior
-ENV DEFAULT_DELAY_MS                150
-ENV DEFAULT_MAX_FRAME_SIZE_PX       480
-
-
-# -----------------------------------------------------------------------------
-#%% Setup python
-
-# Work with files outside of the root fs
-WORKDIR $HOME/gifwrapper
-
-# Install python requirements
-COPY requirements.txt $HOME/gifwrapper
-RUN pip3 install -r $HOME/gifwrapper/requirements.txt
+ENV DEFAULT_FPS                     8
+ENV DEFAULT_FRAME_WIDTH_PX          480
 
 
 # -----------------------------------------------------------------------------
 #%% Launch!
+
+# Work with files outside of the root fs
+WORKDIR $HOME/gifwrapper
 
 # Move system files into the image
 COPY . .

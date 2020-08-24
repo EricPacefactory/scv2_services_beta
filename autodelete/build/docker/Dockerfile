@@ -2,7 +2,16 @@
 #%% Base setup
 
 # Start with ubuntu-python base
-FROM pacefactory/scv2_ubuntupython_base:1.0.1
+FROM pacefactory/scv2_ubuntupython_base:1.0.2
+
+
+# -----------------------------------------------------------------------------
+#%% Setup python
+
+# Install python requirements
+COPY requirements.txt /tmp/scv2/requirements.txt
+RUN python3 -m pip install --upgrade pip && \
+    python3 -m pip install -r /tmp/scv2/requirements.txt
 
 
 # -----------------------------------------------------------------------------
@@ -22,18 +31,10 @@ ENV DELETE_ONCE                     0
 
 
 # -----------------------------------------------------------------------------
-#%% Setup python
+#%% Launch!
 
 # Work with files outside of the root fs
 WORKDIR $HOME/autodelete
-
-# Install python requirements
-COPY requirements.txt $HOME/autodelete
-RUN pip3 install -r $HOME/autodelete/requirements.txt
-
-
-# -----------------------------------------------------------------------------
-#%% Launch!
 
 # Move system files into the image
 COPY . .

@@ -13,6 +13,7 @@ Created on Thu May 14 11:43:55 2020
 import os
 import requests
 import signal
+import base64
 
 import cv2
 import numpy as np
@@ -443,7 +444,7 @@ def create_gif_response(camera_select, snapshot_ems_list, frame_rate, frame_widt
 
 # .....................................................................................................................
 
-def create_video(save_folder_path, file_ext, frame_rate, frame_width):
+def create_video(save_folder_path, file_ext, frame_rate, frame_width = None):
     
     # Make sure the frame rate isn't silly
     frame_rate = min(30, max(0.5, frame_rate))
@@ -454,7 +455,9 @@ def create_video(save_folder_path, file_ext, frame_rate, frame_width):
     
     # Build gif output
     video_frames = ImageSequenceClip(save_folder_path, fps = frame_rate)
-    video_frames.resize(width = frame_width).write_videofile(path_to_output, audio = False)
+    if frame_width is not None:
+        video_frames.resize(width = frame_width)
+    video_frames.write_videofile(path_to_output, audio = False)
     
     return path_to_output
 
@@ -651,6 +654,67 @@ def specific_replay_route(camera_select):
         return create_gif_response(camera_select, snap_ems_list, frame_rate, frame_width_px, ghost_config_dict)
     
     return create_video_response(camera_select, snap_ems_list, safe_ext, frame_rate, frame_width_px, ghost_config_dict)
+
+
+# .....................................................................................................................
+
+@wsgi_app.route("/create-animation/<int:frames_per_second>/<string:file_ext>", methods = ["GET", "POST"])
+def create_animation_route(frames_per_second, file_ext):
+    
+    # If using a GET request, return some info for how to use POST route
+    if flask_request.method == "GET":
+        info_list = ["Use (with a POST request) to create animations",
+                     "Data is expected to be provided as a list of base64 encoded jpgs",
+                     "The first entry in the list will be the first frame of the animation"]
+        return json_response(info_list, status_code = 200)
+    
+    # -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
+    
+    # If we get here, we're dealing with a POST request, make sure we got something...
+    animation_data_list = flask_request.get_json(force = True)
+    missing_animation_data = (animation_data_list is None)
+    if missing_animation_data:
+        error_msg = "Missing animation data. Call this route as a GET request for more info"
+        return error_response(error_msg, status_code = 400)
+    
+    # Make sure the data is a list
+    data_in_list_format = (type(animation_data_list) is list)
+    if not data_in_list_format:
+        error_msg = "Error interpretting animation data! Should be a list of base64 encoded strings"
+        return error_response(error_msg, status_code = 400)
+    
+    # Make sure there is data
+    no_data = (len(animation_data_list) == 0)
+    if no_data:
+        error_msg = "Got empty list! No data to create animation"
+        return error_response(error_msg, status_code = 400)
+    
+    # Convert each base64 string into image data
+    with TemporaryDirectory() as temp_dir:
+        for each_idx, each_encoded_string in enumerate(animation_data_list):
+            
+            # Remove encoding prefix data
+            data_prefix, base64_string = each_encoded_string.split(",")
+            image_bytes = base64.b64decode(base64_string)
+            image_array = np.frombuffer(image_bytes, np.uint8)
+            
+            # Save image data to file system
+            save_name = "{}.jpg".format(each_idx).rjust(20, "0")
+            save_path = os.path.join(temp_dir, save_name)
+            with open(save_path, "wb") as out_file:
+                out_file.write(image_array)
+        
+        path_to_video = create_video(temp_dir, file_ext, frames_per_second)
+        user_file_name = "output.{}".format(file_ext)
+        video_response = send_file(path_to_video,
+                                   attachment_filename = user_file_name,
+                                   mimetype = "video/{}".format(file_ext),
+                                   as_attachment = True)
+        
+        return video_response
+    
+    error_msg = "Error creating video file"
+    return error_response(error_msg, status_code = 400)
 
 # .....................................................................................................................
 # .....................................................................................................................

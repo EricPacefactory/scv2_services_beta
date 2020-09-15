@@ -68,6 +68,7 @@ docker run -d \
            $env_vars \
            --network=$network_setting \
            --name $container_name \
+           --restart $container_restart \
            $image_name \
            > /dev/null
 echo "  --> Success!"

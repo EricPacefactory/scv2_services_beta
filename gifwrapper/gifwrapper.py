@@ -82,11 +82,6 @@ def get_default_fps():
 
 # .....................................................................................................................
 
-def get_default_frame_width():
-    return int(os.environ.get("DEFAULT_FRAME_WIDTH_PX", 480))
-
-# .....................................................................................................................
-
 def register_waitress_shutdown_command():
     
     ''' Awkward hack to get waitress server to close on SIGTERM signals '''
@@ -210,7 +205,7 @@ def get_snapshot_ems_list(camera_select, start_ems, end_ems):
 
 # .....................................................................................................................
 
-def get_snapshot_image_data(camera_select, snapshot_epoch_ms):
+def get_snapshot_image_bytes(camera_select, snapshot_epoch_ms):
     
     # Initialize output
     image_bytes = None
@@ -224,11 +219,11 @@ def get_snapshot_image_data(camera_select, snapshot_epoch_ms):
     if response_success:
         image_bytes = dbserver_response.content
     
-    return image_bytes
+    return response_success, image_bytes
 
 # .....................................................................................................................
 
-def get_background_image_data(camera_select, target_epoch_ms):
+def get_background_image_bytes(camera_select, target_epoch_ms):
     
     # Initialize output
     image_bytes = None
@@ -242,7 +237,7 @@ def get_background_image_data(camera_select, target_epoch_ms):
     if response_success:
         image_bytes = dbserver_response.content
     
-    return image_bytes
+    return response_success, image_bytes
 
 # .....................................................................................................................
 
@@ -259,6 +254,165 @@ def error_response(error_message, status_code = 500):
     ''' Helper function for handling the return of error messages '''
     
     return json_response({"error": error_message}, status_code)
+
+# .....................................................................................................................
+# .....................................................................................................................
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+#%% Drawing functions
+
+# .....................................................................................................................
+
+def interpret_drawing_call(display_frame, drawing_instructions_dict):
+    
+    ''' Function which handles 'drawing calls' for videos rendered by instructions '''
+    
+    # Make sure we got a dictionary
+    drawing_is_dict = (type(drawing_instructions_dict) is dict)
+    if not drawing_is_dict:
+        error_msg = "Drawing instructions malformed! Got: {}".format(drawing_instructions_dict)
+        return draw_error_message(display_frame, error_msg)
+    
+    # Get the drawing type
+    draw_type = drawing_instructions_dict.get("type", None)
+    if draw_type is None:
+        return draw_error_message(display_frame, "Missing drawing type!")
+    
+    # Handle lines/polygons
+    if draw_type == "polyline":
+        return draw_polyline(display_frame, **drawing_instructions_dict)
+    
+    # Handle circles
+    if draw_type == "circle":
+        return draw_circle(display_frame, **drawing_instructions_dict)
+    
+    # Handle squares/rectangles
+    if draw_type == "rectangle":
+        return draw_rectangle(display_frame, **drawing_instructions_dict)
+    
+    # Handle text display
+    if draw_type == "text":
+        return draw_text(display_frame, **drawing_instructions_dict)
+    
+    # Send a blank frame if we didn't get an expected type, just to make it clear something went wrong
+    return draw_error_message(display_frame, "Unrecognized drawing type! ({})".format(draw_type))
+
+# .....................................................................................................................
+
+def draw_polyline(display_image, xy_points_norm,
+                  is_closed = False, color_rgb = (255, 255, 0), thickness_px = 1, antialiased = True, **kwargs):
+    
+    # Convert color to bgr for opencv
+    color_bgr = color_rgb[::-1]
+    
+    # Use filled polygon if thickness is negative
+    fill_polygon = (thickness_px < 1)
+    
+    # Decide on line type
+    line_type = cv2.LINE_AA if antialiased else cv2.LINE_4
+    
+    # Get frame sizing to convert normalized co-ords to pixels
+    frame_height, frame_width = display_image.shape[0:2]
+    frame_scaling = np.float32((frame_width - 1, frame_height - 1))
+    
+    # Scale xy-points to pixels
+    xy_array_px = np.int32(np.round(np.float32(xy_points_norm) * frame_scaling))
+    
+    # Draw a polyline/filled polygon, depending on settings
+    if fill_polygon:
+        return cv2.fillPoly(display_image, [xy_array_px], color_bgr, line_type)
+    return cv2.polylines(display_image, [xy_array_px], is_closed, color_bgr, thickness_px, line_type)
+
+# .....................................................................................................................
+
+def draw_circle(display_image, center_xy_norm,
+                radius_px = 5, color_rgb = (255, 255, 0), thickness_px = 1, antialiased = True, **kwargs):
+    
+    # Convert color to bgr for opencv
+    color_bgr = color_rgb[::-1]
+    
+    # Decide on line type
+    line_type = cv2.LINE_AA if antialiased else cv2.LINE_4
+    
+    # Get frame sizing to convert normalized co-ords to pixels
+    frame_height, frame_width = display_image.shape[0:2]
+    frame_scaling = np.float32((frame_width - 1, frame_height - 1))
+    
+    # Scale xy-points to pixels
+    center_xy_px = np.int32(np.round(np.float32(center_xy_norm) * frame_scaling))
+    
+    return cv2.circle(display_image, tuple(center_xy_px), radius_px, color_bgr, thickness_px, line_type)
+
+# .....................................................................................................................
+
+def draw_rectangle(display_image, top_left_norm, bottom_right_norm,
+                   color_rgb = (255, 255, 0), thickness_px = 1, antialiased = False, **kwargs):
+    
+    # Convert color to bgr for opencv
+    color_bgr = color_rgb[::-1]
+    
+    # Decide on line type
+    line_type = cv2.LINE_AA if antialiased else cv2.LINE_4
+    
+    # Get frame sizing to convert normalized co-ords to pixels
+    frame_height, frame_width = display_image.shape[0:2]
+    frame_scaling = np.float32((frame_width - 1, frame_height - 1))
+    
+    # Scale xy-points to pixels
+    tl_px = np.int32(np.round(np.float32(top_left_norm) * frame_scaling))
+    br_px = np.int32(np.round(np.float32(bottom_right_norm) * frame_scaling))
+    
+    return cv2.rectangle(display_image, tuple(tl_px), tuple(br_px), color_bgr, thickness_px, line_type)
+
+# .....................................................................................................................
+
+def draw_text(display_image, message, text_xy_norm,
+              align_horizontal = "center", align_vertical = "center",
+              text_scale = 0.5, color_rgb = (255, 255, 255), thickness_px = 1, antialiased = True, **kwargs):
+    
+    # Hard-code font type
+    text_font = cv2.FONT_HERSHEY_SIMPLEX
+    
+    # Convert color to bgr for opencv
+    color_bgr = color_rgb[::-1]
+    
+    # Decide on line type
+    line_type = cv2.LINE_AA if antialiased else cv2.LINE_4
+    
+    # Get frame sizing to convert normalized co-ords to pixels
+    frame_height, frame_width = display_image.shape[0:2]
+    frame_scaling = np.float32((frame_width - 1, frame_height - 1))
+    
+    # Scale text-xy co-ordinates to pixels
+    text_x_px, text_y_px = np.int32(np.round(np.float32(text_xy_norm) * frame_scaling))
+    
+    # Figure out text sizing for handling alignment
+    (text_w, text_h), text_baseline = cv2.getTextSize(message, text_font, text_scale, thickness_px)
+    
+    # Figure out text x-location
+    h_align_lut = {"left": 0, "center":  -int(text_w / 2), "right": -text_w}
+    lowered_h_align = str(align_horizontal).lower()
+    x_offset = h_align_lut.get(lowered_h_align, h_align_lut["left"])
+    
+    # Figure out text y-location
+    v_align_lut = {"top": text_h, "center": text_baseline, "bottom": -text_baseline}
+    lowered_v_align = str(align_vertical).lower()
+    y_offset = v_align_lut.get(lowered_v_align, v_align_lut["top"])
+    
+    # Calculate final text postion
+    text_pos = (1 + text_x_px + x_offset, 1 + text_y_px + y_offset)
+    
+    return cv2.putText(display_image, message, text_pos, text_font, text_scale, color_bgr, thickness_px, line_type)
+
+# .....................................................................................................................
+
+def draw_error_message(display_image, error_message):
+    
+    ''' Helper function used to return (blank) frames with error messages '''
+    
+    blank_frame = np.zeros_like(display_image)
+    return draw_text(blank_frame, error_message, (0.5, 0.5), text_scale = 0.4, color_rgb = (255, 70, 20))
 
 # .....................................................................................................................
 # .....................................................................................................................
@@ -309,26 +463,22 @@ def image_pixels_to_bytes(image_pixel_data, jpg_quality_0_to_100 = 50):
 
 # .....................................................................................................................
 
-def apply_ghosting(background_image_bytes, frame_bytes,
-                   brightness_scaling = 1.5, blur_size = 2, pixelation_factor = 3):
+def apply_ghosting(background_image, frame_to_ghost,
+                   brightness_scaling = 1.5, blur_size = 2, pixelation_factor = 3,
+                   enable_ghosting = True,
+                   **kwargs):
     
-    # Bail on missing data
-    if background_image_bytes is None:
-        return np.zeros_like(frame_bytes)
-    if frame_bytes is None:
-        return background_image_bytes
-    
-    # Convert byte-data to actual pixels we can manipulate
-    background_image = image_bytes_to_pixels(background_image_bytes)
-    frame = image_bytes_to_pixels(frame_bytes)
+    # Bail if we're not actually ghosting
+    if not enable_ghosting:
+        return frame_to_ghost
     
     # Get frame sizing so we can scale the background image appropriately
-    frame_height, frame_width = frame.shape[0:2]
+    frame_height, frame_width = frame_to_ghost.shape[0:2]
     frame_wh = (frame_width, frame_height)
     scaled_bg = cv2.resize(background_image, dsize = frame_wh, interpolation = cv2.INTER_AREA)
     
     # Get frame difference
-    frame_difference_3ch = cv2.absdiff(scaled_bg, frame)
+    frame_difference_3ch = cv2.absdiff(scaled_bg, frame_to_ghost)
     frame_difference_1ch = cv2.cvtColor(frame_difference_3ch, cv2.COLOR_BGR2GRAY)
     
     # If needed, blur to further 'censor' the ghosted result
@@ -344,16 +494,15 @@ def apply_ghosting(background_image_bytes, frame_bytes,
     # Combine difference with background & convert back to byte data for final output
     frame_difference_3ch = cv2.cvtColor(frame_difference_1ch, cv2.COLOR_GRAY2BGR)
     ghosted_frame = cv2.addWeighted(scaled_bg, 1.0, frame_difference_3ch, brightness_scaling, 0.0)
-    ghosted_frame_bytes = image_pixels_to_bytes(ghosted_frame)
     
-    return ghosted_frame_bytes
+    return ghosted_frame
 
 # .....................................................................................................................
 
-def save_one_jpg(save_folder_path, image_ems, image_data):
+def save_one_jpg(save_folder_path, save_name, image_data):
     
     # Build the file name with the right extension and enough (left-sided) zero padding to avoid ordering errors
-    save_file_name = "{}.jpg".format(image_ems).rjust(20, "0")
+    save_file_name = "{}.jpg".format(save_name).rjust(20, "0")
     
     # Build pathing to save jpg file & save the image data
     save_path = os.path.join(save_folder_path, save_file_name)
@@ -363,127 +512,181 @@ def save_one_jpg(save_folder_path, image_ems, image_data):
     return save_path
 
 # .....................................................................................................................
+# .....................................................................................................................
 
-def save_all_jpgs(save_folder_path, camera_select, snapshot_ems_list, ghosting_config_dict):
-    
-    # Get ghosting parameters
-    enable_ghosting = ghosting_config_dict.get("enable_ghosting", False)
-    brightness_factor = ghosting_config_dict.get("brightness_factor", 1.5)
-    blur_size = ghosting_config_dict.get("blur_size", 2)
-    pixelation_factor = ghosting_config_dict.get("pixelation_factor", 3)
-    
-    # Grab a background image if we're ghosting
-    bg_bytes = None
-    if enable_ghosting:
-        latest_snap_ems = snapshot_ems_list[-1]
-        bg_bytes = get_background_image_data(camera_select, latest_snap_ems)
-    
-    # Save a jpg for each of the provided epoch ms values
-    for each_idx, each_snap_ems in enumerate(snapshot_ems_list):
-        
-        # Request image data from dbserver
-        snap_bytes = get_snapshot_image_data(camera_select, each_snap_ems)
-        if snap_bytes is None:
-            continue
-        
-        # Apply ghosting if needed
-        if enable_ghosting:
-            snap_bytes = apply_ghosting(bg_bytes, snap_bytes,
-                                        brightness_factor, blur_size, pixelation_factor)
-        
-        # Save the jpegs!
-        save_one_jpg(save_folder_path, each_idx, snap_bytes)
-        
-    # Finally, get the number of files saved, for sanity checks
-    num_files_saved = len(os.listdir(save_folder_path))
-    
-    return num_files_saved
+
+# ---------------------------------------------------------------------------------------------------------------------
+#%% Video creation functions
 
 # .....................................................................................................................
 
-def create_gif(save_folder_path, frame_rate, frame_width):
+def create_video(save_folder_path, frame_rate):
     
     # Make sure the frame rate isn't silly
     frame_rate = min(30, max(0.5, frame_rate))
     
     # Build output name & pathing
-    output_file_name = "temp.gif"
-    path_to_output = os.path.join(save_folder_path, output_file_name)
+    path_to_output = os.path.join(save_folder_path, "temp.mp4")
     
-    # Build gif output
-    gif_frames = ImageSequenceClip(save_folder_path, fps = frame_rate)
-    gif_frames.resize(width = frame_width).write_gif(path_to_output, tempfiles = True)
-    
-    return path_to_output
-
-# .....................................................................................................................
-
-def create_gif_response(camera_select, snapshot_ems_list, frame_rate, frame_width, ghosting_config_dict):
-    
-    # Download each of the snapshot images to a temporary folder
-    with TemporaryDirectory() as temp_dir:
-        
-        # Get all jpg data from the dbserver
-        num_jpgs = save_all_jpgs(temp_dir, camera_select, snapshot_ems_list, ghosting_config_dict)
-        
-        # Assuming we have jpgs, create the gif and process as a file to send back to the user
-        no_jpgs = (num_jpgs == 0)
-        if no_jpgs:
-            error_msg = "Could not retrieve jpgs from target snapshot epoch times"
-            gif_response = error_response(error_msg, status_code = 500)
-            
-        else:
-            path_to_gif = create_gif(temp_dir, frame_rate, frame_width)
-            user_file_name = "output.gif"
-            gif_response = send_file(path_to_gif,
-                                     attachment_filename = user_file_name,
-                                     mimetype = "image/gif",
-                                     as_attachment = True)
-    
-    return gif_response
-
-# .....................................................................................................................
-
-def create_video(save_folder_path, file_ext, frame_rate, frame_width = None):
-    
-    # Make sure the frame rate isn't silly
-    frame_rate = min(30, max(0.5, frame_rate))
-    
-    # Build output name & pathing
-    output_file_name = "temp.{}".format(file_ext)
-    path_to_output = os.path.join(save_folder_path, output_file_name)
-    
-    # Build gif output
+    # Build video output, with resizing if needed
     video_frames = ImageSequenceClip(save_folder_path, fps = frame_rate)
-    if frame_width is not None:
-        video_frames.resize(width = frame_width)
     video_frames.write_videofile(path_to_output, audio = False)
     
     return path_to_output
 
 # .....................................................................................................................
 
-def create_video_response(camera_select, snapshot_ems_list, file_ext, frame_rate, frame_width, ghosting_config_dict):
+def create_video_simple_replay(camera_select, snapshot_ems_list, enable_ghosting):
     
-    # Download each of the snapshot images to a temporary folder
-    with TemporaryDirectory() as temp_dir:
+    # Hard-code 'simple' video parameters
+    frame_rate = get_default_fps()
+    ghost_config_dict = {"enable": enable_ghosting,
+                         "brightness_factor": 1.5,
+                         "blur_size": 2,
+                         "pixelation_factor": 3}
+    
+    try:
         
-        # Get all jpg data from the dbserver
-        num_jpgs = save_all_jpgs(temp_dir, camera_select, snapshot_ems_list, ghosting_config_dict)
-        
-        # Assuming we have jpgs, create the video and process as a file to send back to the user
-        no_jpgs = (num_jpgs == 0)
-        if no_jpgs:
-            error_msg = "Could not retrieve jpgs from target snapshot epoch times"
-            video_response = error_response(error_msg, status_code = 500)
+        # Grab a background image if we're ghosting
+        bg_frame = None
+        enable_ghosting = ghost_config_dict.get("enable", False)
+        if enable_ghosting:
+            last_snap_ems = snapshot_ems_list[-1]
+            got_background, bg_bytes = get_background_image_bytes(camera_select, last_snap_ems)
+            if not got_background:
+                raise FileNotFoundError("Couldn't retrieve background image for ghosting!")
+            bg_frame = image_bytes_to_pixels(bg_bytes)
+    
+        # Download each of the snapshot images to a temporary folder
+        with TemporaryDirectory() as temp_dir:
             
-        else:
-            path_to_video = create_video(temp_dir, file_ext, frame_rate, frame_width)
-            user_file_name = "output.{}".format(file_ext)
+            # Save a jpg for each of the provided epoch ms values
+            for each_idx, each_snap_ems in enumerate(snapshot_ems_list):
+                
+                # Request image data from dbserver
+                got_snapshot, snap_bytes = get_snapshot_image_bytes(camera_select, each_snap_ems)
+                if not got_snapshot:
+                    continue
+                
+                # Apply ghosting if needed
+                if enable_ghosting:
+                    snap_frame = image_bytes_to_pixels(snap_bytes)
+                    ghost_frame = apply_ghosting(bg_frame, snap_frame, **ghost_config_dict)
+                    snap_bytes = image_pixels_to_bytes(ghost_frame)
+                
+                # Save the jpgs!
+                save_one_jpg(temp_dir, each_idx, snap_bytes)
+            
+            # Create the video file and return for download
+            path_to_video = create_video(temp_dir, frame_rate)
+            user_file_name = "simple_replay.mp4"
             video_response = send_file(path_to_video,
                                        attachment_filename = user_file_name,
-                                       mimetype = "video/{}".format(file_ext),
+                                       mimetype = "video/mp4",
                                        as_attachment = True)
+        
+    except Exception as err:
+        # If anything goes wrong, return an error response instead
+        error_type = err.__class__.__name__
+        print("",  "{} (create_simple_video_response):".format(error_type), str(err), sep = "\n")
+        error_msg = ["({}) Error creating simple replay video:".format(error_type), str(err)]
+        video_response = error_response(error_msg, status_code = 500)
+    
+    return video_response
+
+# .....................................................................................................................
+
+def create_video_from_instructions(camera_select, instructions_list, frames_per_second, ghost_config_dict):
+    
+    try:
+        
+        # Grab a background image if we're ghosting
+        bg_frame = None
+        enable_ghosting = ghost_config_dict.get("enable", False)
+        if enable_ghosting:
+            last_snapshot_instruction = instructions_list[-1]
+            last_snap_ems = last_snapshot_instruction.get("snapshot_ems", None)
+            got_background, bg_bytes = get_background_image_bytes(camera_select, last_snap_ems)
+            if not got_background:
+                raise FileNotFoundError("Couldn't retrieve background image for ghosting!")
+            bg_frame = image_bytes_to_pixels(bg_bytes)
+        
+        # Convert each base64 string into image data
+        with TemporaryDirectory() as temp_dir:
+            for each_idx, each_instruction_dict in enumerate(instructions_list):
+                
+                # Pull out instruction data (skip if snapshot epoch ms value is missing)
+                drawing_list = each_instruction_dict.get("frame_drawing", [])
+                snapshot_ems = each_instruction_dict.get("snapshot_ems", None)
+                if snapshot_ems is None:
+                    continue
+                
+                # First retrieve snapshot
+                got_snapshot, snap_bytes = get_snapshot_image_bytes(camera_select, snapshot_ems)
+                if not got_snapshot:
+                    continue
+                
+                # Convert to pixel data so we can work with the image and apply ghosting if needed
+                display_frame = image_bytes_to_pixels(snap_bytes)
+                if enable_ghosting:
+                    display_frame = apply_ghosting(bg_frame, display_frame, **ghost_config_dict)
+                
+                # Interpret all drawing instructions
+                for each_draw_call in drawing_list:
+                    display_frame = interpret_drawing_call(display_frame, each_draw_call)
+                
+                # Save image data to file system
+                save_name = "{}.jpg".format(each_idx).rjust(20, "0")
+                save_path = os.path.join(temp_dir, save_name)
+                cv2.imwrite(save_path, display_frame)
+            
+            # Create the video file and return for download
+            path_to_video = create_video(temp_dir, frames_per_second)
+            video_response = send_file(path_to_video,
+                                       mimetype = "video/mp4",
+                                       as_attachment = False)
+        
+    except Exception as err:
+        # If anything goes wrong, return an error response instead
+        error_type = err.__class__.__name__
+        print("",  "{} (create_video_from_instructions):".format(error_type), str(err), sep = "\n")
+        error_msg = ["({}) Error creating video from instructions:".format(error_type), str(err)]
+        video_response = error_response(error_msg, status_code = 500)
+    
+    return video_response
+
+# .....................................................................................................................
+
+def create_video_response_from_b64_jpgs(base64_jpgs_list, frames_per_second):
+    
+    try:
+        # Convert each base64 string into image data
+        with TemporaryDirectory() as temp_dir:
+            for each_idx, each_b64_jpg_string in enumerate(base64_jpgs_list):
+                
+                # Remove encoding prefix data
+                data_prefix, base64_string = each_b64_jpg_string.split(",")
+                image_bytes = base64.b64decode(base64_string)
+                image_array = np.frombuffer(image_bytes, np.uint8)
+                
+                # Save image data to file system
+                save_name = "{}.jpg".format(each_idx).rjust(20, "0")
+                save_path = os.path.join(temp_dir, save_name)
+                with open(save_path, "wb") as out_file:
+                    out_file.write(image_array)
+            
+            # Create the video file and return for download
+            path_to_video = create_video(temp_dir, frames_per_second)
+            video_response = send_file(path_to_video,
+                                       mimetype = "video/mp4",
+                                       as_attachment = False)
+        
+    except Exception as err:
+        # If anything goes wrong, return an error response instead
+        error_type = err.__class__.__name__
+        print("",  "{} (create_video_response_from_b64_jpgs):".format(error_type), str(err), sep = "\n")
+        error_msg = ["({}) Error creating video from b64 jpgs:".format(error_type), str(err)]
+        video_response = error_response(error_msg, status_code = 500)
     
     return video_response
 
@@ -546,8 +749,15 @@ def help_route():
         cleaned_url = each_url.replace("<", " (").replace(">", ") ")
         method_str = ", ".join(filter(check_methods, each_route.methods))
         
-        html_entry = "<p><b>[{}]</b>&nbsp;&nbsp;&nbsp;{}</p>".format(method_str, cleaned_url)
-        html_entry_list.append(html_entry)
+        # Generate a inactive/active link versions of the url
+        method_html = "<b>[{}]</b>&nbsp;&nbsp;&nbsp;".format(method_str)
+        dead_html_entry = "<p>{}{}</p>".format(method_html, cleaned_url)
+        link_html_entry = "<p>{}<a href={}>{}</a></p>".format(method_html, cleaned_url, cleaned_url)
+        
+        # Decide which style url to present
+        show_as_dead = ("(" in cleaned_url) or (cleaned_url == "/help") or (cleaned_url == "/")
+        add_html_entry = dead_html_entry if show_as_dead else link_html_entry
+        html_entry_list.append(add_html_entry)
     
     # Alphabetically sort url listings (so they group nicely) then add to html
     _, sorted_html_entries = zip(*sorted(zip(url_list, html_entry_list)))
@@ -557,20 +767,12 @@ def help_route():
 
 # .....................................................................................................................
 
-@wsgi_app.route("/<string:camera_select>/simple-replay/<string:file_ext>/<enable_ghosting>/<int:start_ems>/<int:end_ems>")
-def simple_replay_route(camera_select, file_ext, enable_ghosting, start_ems, end_ems):
+@wsgi_app.route("/<string:camera_select>/simple-replay/<int:start_ems>/<int:end_ems>")
+def simple_replay_route(camera_select, start_ems, end_ems):
     
     # Interpret ghosting flag
-    enable_ghosting_str = str(enable_ghosting)
+    enable_ghosting_str = flask_request.args.get("ghost", "true")
     enable_ghosting_bool = (enable_ghosting_str.lower() in {"1", "true", "on", "enable"})
-    ghost_config_dict = {"enable_ghosting": enable_ghosting_bool,
-                         "brightness_factor": 1.5,
-                         "blur_size": 2,
-                         "pixelation_factor": 3}
-    
-    # Use default timing & sizing for simple replay route
-    frame_rate = get_default_fps()
-    frame_width_px = get_default_frame_width()
     
     # Request snapshot timing info from dbserver
     snap_ems_list = get_snapshot_ems_list(camera_select, start_ems, end_ems)
@@ -582,139 +784,150 @@ def simple_replay_route(camera_select, file_ext, enable_ghosting, start_ems, end
     # Make sure snapshot times are ordered!
     snap_ems_list = sorted(snap_ems_list)
     
-    # Decide on output format
-    safe_ext = str(file_ext).replace(".", "").lower()
-    is_gif = (safe_ext == "gif")
-    if is_gif:
-        return create_gif_response(camera_select, snap_ems_list, frame_rate, frame_width_px, ghost_config_dict)
-    
-    return create_video_response(camera_select, snap_ems_list, safe_ext, frame_rate, frame_width_px, ghost_config_dict)
+    return create_video_simple_replay(camera_select, snap_ems_list, enable_ghosting_bool)
 
 # .....................................................................................................................
 
-@wsgi_app.route("/<string:camera_select>/specific-replay", methods = ["GET", "POST"])
-def specific_replay_route(camera_select):
-    
-    # If using a GET request, return some info for how to use POST route
-    if flask_request.method == "GET":
-        post_args_dict = {"frame_rate": "Number of frames displayed per second of animation",
-                          "frame_width_px": "The width of the output animation (height scales proportionally)",
-                          "snapshot_ems_list": "A list of the snapshot epoch ms values to render into a animation",
-                          "file_ext": "Output file extension. Can be gif or mp4 for example",
-                          "enable_ghosting": "If true, all frames will be ghosted prior to rendering the animation",
-                          "ghost_brightness_factor": "A brightness scaling factor for ghosting (should be > 1.0)",
-                          "ghost_blur_size": "Controls how much blurring occurs on ghosted images",
-                          "ghost_pixelation_factor": "Controls pixelation applied to ghosted images"}
-        
-        return json_response(post_args_dict, status_code = 200)
-    
-    # -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
-    
-    # If we get here, we're dealing with a POST request, make sure we got something...
-    post_args_dict = flask_request.get_json()
-    missing_post_args = (post_args_dict is None)
-    if missing_post_args:
-        error_msg = "Missing POST arguments. Call this route as a GET request for options"
-        return error_response(error_msg, status_code = 400)
-    
-    # Parse the post args
-    snap_ems_list = post_args_dict.get("snapshot_ems_list", [])
-    frame_rate = post_args_dict.get("frame_rate", get_default_fps())
-    frame_width_px = post_args_dict.get("frame_width_px", get_default_frame_width())
-    file_ext = post_args_dict.get("file_ext", "gif")
-    enable_ghosting = post_args_dict.get("enable_ghosting", False)
-    ghost_brightness_factor = post_args_dict.get("ghost_brightness_factor", 1.5)
-    ghost_blur_size = post_args_dict.get("ghost_blur_size", 2)
-    ghost_pixelation_factor = post_args_dict.get("ghost_pixelation_factor", 3)
-    ghost_config_dict = {"enable_ghosting": enable_ghosting,
-                         "brightness_factor": ghost_brightness_factor,
-                         "blur_size": ghost_blur_size,
-                         "pixelation_factor": ghost_pixelation_factor}
-    
-    # Check for errors providing snapshot times
-    bad_snap_ems_list = (type(snap_ems_list) not in {list, tuple})
-    if bad_snap_ems_list:
-        snap_ems_type = type(snap_ems_list).__name__
-        error_msg = "snapshot_ems_list should be a list! Got: {}".format(snap_ems_type)
-        return error_response(error_msg, status_code = 400)
-    
-    # Avoid missing snapshot times
-    no_snapshots_to_download = (len(snap_ems_list) == 0)
-    if no_snapshots_to_download:
-        error_msg = "No snapshot epoch ms values were provided!"
-        return error_response(error_msg, status_code = 400)
-    
-    # Make sure frame size is reasonable
-    frame_width_px = max(10, int(frame_width_px))
-    
-    # Decide on output format
-    safe_ext = str(file_ext).replace(".", "").lower()
-    is_gif = (safe_ext == "gif")
-    if is_gif:
-        return create_gif_response(camera_select, snap_ems_list, frame_rate, frame_width_px, ghost_config_dict)
-    
-    return create_video_response(camera_select, snap_ems_list, safe_ext, frame_rate, frame_width_px, ghost_config_dict)
-
-
-# .....................................................................................................................
-
-@wsgi_app.route("/create-animation/<int:frames_per_second>/<string:file_ext>", methods = ["GET", "POST"])
-def create_animation_route(frames_per_second, file_ext):
+@wsgi_app.route("/create-animation/from-instructions", methods = ["GET", "POST"])
+def create_animation_from_instructions_route():
     
     # If using a GET request, return some info for how to use POST route
     if flask_request.method == "GET":
         info_list = ["Use (with a POST request) to create animations",
-                     "Data is expected to be provided as a list of base64 encoded jpgs",
+                     "Data is expected to be provided in JSON, in the following format:",
+                     "{",
+                     " 'camera_select: (string),",
+                     " 'frame_rate': (float),",
+                     " 'ghosting': {",
+                     "              'enable': (boolean),",
+                     "              'brightness_factor': (float),",
+                     "              'blur_size': (int),",
+                     "              'pixelation_factor': (int)",
+                     "             },",
+                     " 'instructions': [...]",
+                     "}",
+                     "",
+                     "The 'instructions' key should be a list drawing instructions for each snapshot",
+                     "The first entry in the list will be the first frame of the animation",
+                     "Each entry in the instructions list should be another JSON object, in the following format:",
+                     "[",
+                     " {'snapshot_ems': (int), 'frame_drawing': [...]},",
+                     " {... next frame ...},",
+                     " {... next frame ...},",
+                     " etc.",
+                     "]",
+                     "",
+                     "The 'frame_drawing' key should hold a list of what should be drawn on the corresponding snapshot",
+                     "Each entry in the drawing list should be a JSON object (see below for options)",
+                     "If nothing is to be drawn, the drawing instructions should be an empty list: []",
+                     "The following drawing instructions are available:",
+                     "{",
+                     " 'type': 'polyline',",
+                     " 'xy_points_norm': (list of xy pairs in normalized co-ordinates)",
+                     " 'is_closed': (boolean),",
+                     " 'color_rgb': (list of 3 values between 0-255),",
+                     " 'thickness_px': (int, use -1 to fill),",
+                     " 'antialiased': (boolean)",
+                     "}",
+                     "",
+                     "{",
+                     " 'type': 'circle',",
+                     " 'center_xy_norm': (pair of xy values in normalized co-ordinates),",
+                     " 'radius_px': (int),",
+                     " 'color_rgb': (list of 3 values between 0-255),",
+                     " 'thickness_px': (int, use -1 to fill),",
+                     " 'antialiased': (boolean)",
+                     "}",
+                     "",
+                     "{",
+                     " 'type': 'rectangle',",
+                     " 'top_left_norm': (pair of xy values in normalized co-ordinates),",
+                     " 'bottom_right_norm': (pair of xy values in normalized co-ordinates),",
+                     " 'color_rgb': (list of 3 values between 0-255),",
+                     " 'thickness_px': (int, use -1 to fill),",
+                     " 'antialiased': (boolean)",
+                     "}",
+                     "",
+                     "{",
+                     " 'type': 'text',",
+                     " 'message': (string),",
+                     " 'text_xy_norm': (pair of xy values in normalized co-ordinates),",
+                     " 'align_horizontal': ('left', 'center' or 'right')",
+                     " 'align_vertical': ('top', 'center' or 'bottom')",
+                     " 'text_scale': (float)",
+                     " 'color_rgb': (list of 3 values between 0-255),",
+                     " 'thickness_px': (int, use -1 to fill),",
+                     " 'antialiased': (boolean)",
+                     "}"]
+        return json_response(info_list, status_code = 200)
+    
+    # -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
+    
+    # If we get here, we're dealing with a POST request, make sure we got something...
+    animation_data_dict = flask_request.get_json(force = True)
+    missing_animation_data = (animation_data_dict is None)
+    if missing_animation_data:
+        error_msg = "Missing animation data. Call this route as a GET request for more info"
+        return error_response(error_msg, status_code = 400)
+    
+    # Pull-out global config settings (or defaults)
+    camera_select = animation_data_dict.get("camera_select", None)
+    frame_rate = animation_data_dict.get("frame_rate", get_default_fps())
+    ghost_config_dict = animation_data_dict.get("ghosting", {"enable": False})
+    instructions_list = animation_data_dict.get("instructions", [])
+    
+    # Bail if no camera was selected
+    bad_camera = (camera_select is None)
+    if bad_camera:
+        error_msg = "Error! No camera selected"
+        return error_response(error_msg, status_code = 400)
+    
+    # Bail if we got no frame instructions
+    data_is_valid = (len(instructions_list) > 0)
+    if not data_is_valid:
+        error_msg = "Error! Did not find any drawing instructions"
+        return error_response(error_msg, status_code = 400)
+    
+    # Use instructions to get target snapshots & draw overlay as needed
+    return create_video_from_instructions(camera_select, instructions_list, frame_rate, ghost_config_dict)
+
+# .....................................................................................................................
+
+@wsgi_app.route("/create-animation/from-b64-jpgs", methods = ["GET", "POST"])
+def create_animation_from_b64_jpgs_route():
+    
+    # If using a GET request, return some info for how to use POST route
+    if flask_request.method == "GET":
+        info_list = ["Use (with a POST request) to create animations",
+                     "Data is expected to be provided in JSON, in the following format:",
+                     "{",
+                     " 'frame_rate': (float),",
+                     " 'b64_jpgs': (list of b64-encoded jpgs)",
+                     "}",
+                     "The 'b64_jpgs' entry should contain a sequence of base64 encoded jpgs to be rendered",
                      "The first entry in the list will be the first frame of the animation"]
         return json_response(info_list, status_code = 200)
     
     # -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
     
     # If we get here, we're dealing with a POST request, make sure we got something...
-    animation_data_list = flask_request.get_json(force = True)
-    missing_animation_data = (animation_data_list is None)
+    animation_data_dict = flask_request.get_json(force = True)
+    missing_animation_data = (animation_data_dict is None)
     if missing_animation_data:
         error_msg = "Missing animation data. Call this route as a GET request for more info"
         return error_response(error_msg, status_code = 400)
     
-    # Make sure the data is a list
-    data_in_list_format = (type(animation_data_list) is list)
-    if not data_in_list_format:
-        error_msg = "Error interpretting animation data! Should be a list of base64 encoded strings"
+    # Pull out global information
+    frame_rate = animation_data_dict.get("frame_rate", get_default_fps())
+    b64_jpgs_list = animation_data_dict.get("b64_jpgs", [])
+    
+    # Bail if we got no image data
+    data_is_valid = (len(b64_jpgs_list) > 0)
+    if not data_is_valid:
+        error_msg = "Error! Did not find any base64 jpgs data to render!"
         return error_response(error_msg, status_code = 400)
     
-    # Make sure there is data
-    no_data = (len(animation_data_list) == 0)
-    if no_data:
-        error_msg = "Got empty list! No data to create animation"
-        return error_response(error_msg, status_code = 400)
-    
-    # Convert each base64 string into image data
-    with TemporaryDirectory() as temp_dir:
-        for each_idx, each_encoded_string in enumerate(animation_data_list):
-            
-            # Remove encoding prefix data
-            data_prefix, base64_string = each_encoded_string.split(",")
-            image_bytes = base64.b64decode(base64_string)
-            image_array = np.frombuffer(image_bytes, np.uint8)
-            
-            # Save image data to file system
-            save_name = "{}.jpg".format(each_idx).rjust(20, "0")
-            save_path = os.path.join(temp_dir, save_name)
-            with open(save_path, "wb") as out_file:
-                out_file.write(image_array)
-        
-        path_to_video = create_video(temp_dir, file_ext, frames_per_second)
-        user_file_name = "output.{}".format(file_ext)
-        video_response = send_file(path_to_video,
-                                   attachment_filename = user_file_name,
-                                   mimetype = "video/{}".format(file_ext),
-                                   as_attachment = True)
-        
-        return video_response
-    
-    error_msg = "Error creating video file"
-    return error_response(error_msg, status_code = 400)
+    return create_video_response_from_b64_jpgs(b64_jpgs_list, frame_rate)
 
 # .....................................................................................................................
 # .....................................................................................................................

@@ -28,9 +28,8 @@ ENV GIFSERVER_PORT                  7171
 ENV DBSERVER_HOST                   localhost
 ENV DBSERVER_PORT                   8050
 
-# Set variables for default gif making behavior
+# Set variables for default animation output
 ENV DEFAULT_FPS                     8
-ENV DEFAULT_FRAME_WIDTH_PX          480
 
 
 # -----------------------------------------------------------------------------

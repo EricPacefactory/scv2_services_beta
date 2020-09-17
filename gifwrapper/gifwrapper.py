@@ -541,7 +541,7 @@ def create_video_simple_replay(camera_select, snapshot_ems_list, enable_ghosting
     # Hard-code 'simple' video parameters
     frame_rate = get_default_fps()
     ghost_config_dict = {"enable": enable_ghosting,
-                         "brightness_factor": 1.5,
+                         "brightness_scaling": 1.5,
                          "blur_size": 2,
                          "pixelation_factor": 3}
     
@@ -616,7 +616,7 @@ def create_video_from_instructions(camera_select, instructions_list, frames_per_
             for each_idx, each_instruction_dict in enumerate(instructions_list):
                 
                 # Pull out instruction data (skip if snapshot epoch ms value is missing)
-                drawing_list = each_instruction_dict.get("frame_drawing", [])
+                drawing_list = each_instruction_dict.get("drawing", [])
                 snapshot_ems = each_instruction_dict.get("snapshot_ems", None)
                 if snapshot_ems is None:
                     continue
@@ -793,14 +793,14 @@ def create_animation_from_instructions_route():
     
     # If using a GET request, return some info for how to use POST route
     if flask_request.method == "GET":
-        info_list = ["Use (with a POST request) to create animations",
+        info_list = ["Use (as a POST request) to create animations",
                      "Data is expected to be provided in JSON, in the following format:",
                      "{",
                      " 'camera_select: (string),",
                      " 'frame_rate': (float),",
                      " 'ghosting': {",
                      "              'enable': (boolean),",
-                     "              'brightness_factor': (float),",
+                     "              'brightness_scaling': (float),",
                      "              'blur_size': (int),",
                      "              'pixelation_factor': (int)",
                      "             },",
@@ -811,13 +811,13 @@ def create_animation_from_instructions_route():
                      "The first entry in the list will be the first frame of the animation",
                      "Each entry in the instructions list should be another JSON object, in the following format:",
                      "[",
-                     " {'snapshot_ems': (int), 'frame_drawing': [...]},",
+                     " {'snapshot_ems': (int), 'drawing': [...]},",
                      " {... next frame ...},",
                      " {... next frame ...},",
                      " etc.",
                      "]",
                      "",
-                     "The 'frame_drawing' key should hold a list of what should be drawn on the corresponding snapshot",
+                     "The 'drawing' key should hold a list of what should be drawn on the corresponding snapshot",
                      "Each entry in the drawing list should be a JSON object (see below for options)",
                      "If nothing is to be drawn, the drawing instructions should be an empty list: []",
                      "The following drawing instructions are available:",
@@ -898,7 +898,7 @@ def create_animation_from_b64_jpgs_route():
     
     # If using a GET request, return some info for how to use POST route
     if flask_request.method == "GET":
-        info_list = ["Use (with a POST request) to create animations",
+        info_list = ["Use (as a POST request) to create animations",
                      "Data is expected to be provided in JSON, in the following format:",
                      "{",
                      " 'frame_rate': (float),",

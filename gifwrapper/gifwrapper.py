@@ -327,7 +327,7 @@ def draw_polyline(display_image, xy_points_norm,
 # .....................................................................................................................
 
 def draw_circle(display_image, center_xy_norm,
-                radius_px = 5, color_rgb = (255, 255, 0), thickness_px = 1, antialiased = True, **kwargs):
+                radius_norm = 0.05, color_rgb = (255, 255, 0), thickness_px = 1, antialiased = True, **kwargs):
     
     # Convert color to bgr for opencv
     color_bgr = color_rgb[::-1]
@@ -338,6 +338,10 @@ def draw_circle(display_image, center_xy_norm,
     # Get frame sizing to convert normalized co-ords to pixels
     frame_height, frame_width = display_image.shape[0:2]
     frame_scaling = np.float32((frame_width - 1, frame_height - 1))
+    
+    # Calculate diagonal length and use it to determine radius in pixels
+    frame_diagonal_px = np.sqrt(np.sum(np.square(frame_scaling)))
+    radius_px = int(round(radius_norm * frame_diagonal_px))
     
     # Scale xy-points to pixels
     center_xy_px = np.int32(np.round(np.float32(center_xy_norm) * frame_scaling))
@@ -369,7 +373,8 @@ def draw_rectangle(display_image, top_left_norm, bottom_right_norm,
 
 def draw_text(display_image, message, text_xy_norm,
               align_horizontal = "center", align_vertical = "center",
-              text_scale = 0.5, color_rgb = (255, 255, 255), thickness_px = 1, antialiased = True, **kwargs):
+              text_scale = 0.5, color_rgb = (255, 255, 255), bg_color_rgb = None, thickness_px = 1, antialiased = True,
+              **kwargs):
     
     # Hard-code font type
     text_font = cv2.FONT_HERSHEY_SIMPLEX
@@ -402,6 +407,11 @@ def draw_text(display_image, message, text_xy_norm,
     
     # Calculate final text postion
     text_pos = (1 + text_x_px + x_offset, 1 + text_y_px + y_offset)
+    
+    # Drawn background text, if needed
+    if bg_color_rgb is not None:
+        bg_thickness = (2 * thickness_px)
+        cv2.putText(display_image, message, text_pos, text_font, text_scale, bg_color_rgb, bg_thickness, line_type)
     
     return cv2.putText(display_image, message, text_pos, text_font, text_scale, color_bgr, thickness_px, line_type)
 
@@ -823,7 +833,7 @@ def create_animation_from_instructions_route():
                      "The following drawing instructions are available:",
                      "{",
                      " 'type': 'polyline',",
-                     " 'xy_points_norm': (list of xy pairs in normalized co-ordinates)",
+                     " 'xy_points_norm': (list of xy pairs in normalized co-ordinates),",
                      " 'is_closed': (boolean),",
                      " 'color_rgb': (list of 3 values between 0-255),",
                      " 'thickness_px': (int, use -1 to fill),",
@@ -833,7 +843,7 @@ def create_animation_from_instructions_route():
                      "{",
                      " 'type': 'circle',",
                      " 'center_xy_norm': (pair of xy values in normalized co-ordinates),",
-                     " 'radius_px': (int),",
+                     " 'radius_norm': (float, normalized to frame diagonal length),",
                      " 'color_rgb': (list of 3 values between 0-255),",
                      " 'thickness_px': (int, use -1 to fill),",
                      " 'antialiased': (boolean)",
@@ -856,6 +866,7 @@ def create_animation_from_instructions_route():
                      " 'align_vertical': ('top', 'center' or 'bottom')",
                      " 'text_scale': (float)",
                      " 'color_rgb': (list of 3 values between 0-255),",
+                     " 'bg_color_rgb': (list of 3 values between 0-255 or null to disable),",
                      " 'thickness_px': (int, use -1 to fill),",
                      " 'antialiased': (boolean)",
                      "}"]

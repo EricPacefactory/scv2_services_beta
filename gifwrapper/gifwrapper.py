@@ -151,6 +151,35 @@ def simple_replay_route(camera_select, start_ems, end_ems):
 
 # .....................................................................................................................
 
+@wsgi_app.route("/<string:camera_select>/simple-replay/<string:file_ext>/<enable_ghosting>/<int:start_ems>/<int:end_ems>")
+def simple_replay_route_legacy_support(camera_select, file_ext, enable_ghosting, start_ems, end_ems):
+    
+    # Check dbserver connection, since we'll need it to get snapshot listing
+    dbserver_is_connected = check_server_connection(DBSERVER_URL, feedback_on_error = False)
+    if not dbserver_is_connected:
+        error_msg = "No connection to dbserver!"
+        return error_response(error_msg, status_code = 500)
+    
+    # Get ghosting setting from url
+    enable_ghosting_str = str(enable_ghosting)
+    enable_ghosting_bool = (enable_ghosting_str.lower() in {"1", "true", "on", "enable"})
+    
+    # Ignore file_ext... Only supporting mp4 for now
+    
+    # Request snapshot timing info from dbserver
+    snap_ems_list = get_snapshot_ems_list(DBSERVER_URL, camera_select, start_ems, end_ems)
+    no_snapshots_to_download = (len(snap_ems_list) == 0)
+    if no_snapshots_to_download:
+        error_msg = "No snapshots in provided time range"
+        return error_response(error_msg, status_code = 400)
+    
+    # Make sure snapshot times are ordered!
+    snap_ems_list = sorted(snap_ems_list)
+    
+    return create_video_simple_replay(DBSERVER_URL, camera_select, snap_ems_list, enable_ghosting_bool)
+
+# .....................................................................................................................
+
 @wsgi_app.route("/create-animation/from-instructions", methods = ["GET", "POST"])
 def create_animation_from_instructions_route():
     

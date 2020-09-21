@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Test Gifwrapper - from b64 jpgs</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" href="data:;base64,iVBORw0KGgo=">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/downloadjs/1.4.8/download.min.js" integrity="sha512-WiGQZv8WpmQVRUFXZywo7pHIO0G/o3RyiAJZj8YXNN4AV7ReR1RYWVmZJ6y3H06blPcjJmG/sBpOVZjTSFFlzQ==" crossorigin="anonymous"></script>
+</head>
+
+<body>
+    <p>Creating video from b64 jpgs...</p>
+    <canvas id="canvas" width="200" height="100" style="display:none;"></canvas>
+</body>
+</html>
+
+<script>
+    var canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext("2d");
+
+    let red_val = 0;
+    let green_val = 0;
+    let blue_val = 0;
+    let frame_data = [];
+    for(let i = 0; i < 50 ; i++){
+
+        if(i < 10) {
+            red_val = 20 * i;
+            green_val = 0;
+            blue_val = 0;
+        } else if(i < 20) {
+            const offset_i = i - 10;
+            red_val = 200;
+            green_val = 20 * offset_i;
+            blue_val = 0;
+        } else if(i < 30) {
+            const offset_i = i - 20;
+            red_val = 200 - 20 * offset_i;
+            green_val = 200;
+            blue_val = 0;
+        } else if(i < 40) {
+            const offset_i = i - 30;
+            red_val = 0;
+            green_val = 200;
+            blue_val = 20 * offset_i;
+        } else if(i < 50) {
+            const offset_i = i - 40;
+            red_val = 0;
+            green_val = 200 - 20 * offset_i;
+            blue_val = 200;
+        }
+
+        ctx.fillStyle = `rgb(${red_val}, ${green_val}, ${blue_val})`;
+        ctx.fillRect(0, 0, 200, 100);
+        const new_jpg = canvas.toDataURL("image/jpeg", 0.15);
+        frame_data.push(new_jpg);
+        //console.log(new_jpg)
+    }
+
+    
+    const post_data = {"frame_rate": 30, "b64_jpgs": frame_data};
+    const post_url = "http://localhost:7171/create-animation/from-b64-jpgs";
+    fetch(post_url, {method: 'POST', body: JSON.stringify(post_data)})
+    .then(response => response.blob())
+    .then(blob_data => download(blob_data, "test_from_b64jpgs.mp4", "video/mp4"))
+    
+
+</script>

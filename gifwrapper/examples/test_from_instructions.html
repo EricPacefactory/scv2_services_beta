@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Test Gifwrapper - from instructions</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/downloadjs/1.4.8/download.min.js" integrity="sha512-WiGQZv8WpmQVRUFXZywo7pHIO0G/o3RyiAJZj8YXNN4AV7ReR1RYWVmZJ6y3H06blPcjJmG/sBpOVZjTSFFlzQ==" crossorigin="anonymous"></script>
+    <link rel="icon" href="data:;base64,iVBORw0KGgo=">
+</head>
+
+<body><p>This example requires hard-coding camera + snapshot ems values in html file!!!</p><p>Creating video from instructions...</p></body>
+</html>
+
+<script>
+
+
+    function polyline(xy_points, is_closed = false, color = [255, 255, 0], thickness = 1, antialiased = true){
+
+        draw_instruction = {
+                            "type": "polyline",
+                            "xy_points_norm": xy_points,
+                            "is_closed": is_closed,
+                            "color_rgb": color,
+                            "thickness_px": thickness,
+                            "antialiased": antialiased
+                           }
+
+        return draw_instruction
+    }
+
+    function circle(center_xy, radius = 0.1, color = [255, 255, 0], thickness = 1, antialiased = true){
+
+        draw_instruction = {
+                            "type": "circle",
+                            "center_xy_norm": center_xy,
+                            "radius_norm": radius,
+                            "color_rgb": color,
+                            "thickness_px": thickness,
+                            "antialiased": antialiased
+                        }
+
+        return draw_instruction
+    }
+
+    function rectangle(top_left, bottom_right, color = [255, 255, 0], thickness = 1, antialiased = true){
+
+        draw_instruction = {
+                            "type": "rectangle",
+                            "top_left_norm": top_left,
+                            "bottom_right_norm": bottom_right,
+                            "color_rgb": color,
+                            "thickness_px": thickness,
+                            "antialiased": antialiased
+                        }
+
+        return draw_instruction
+    }
+
+    function text_msg(message, text_xy,
+                      align_horizontal = "center", align_vertical = "center",
+                      text_scale = 0.5, color = [255, 255, 255], thickness = 1, antialiased = true){
+
+        draw_instruction = {
+                            "type": "text",
+                            "message": message,
+                            "text_xy_norm": text_xy,
+                            "align_horizontal": align_horizontal,
+                            "align_vertical": align_vertical,
+                            "text_scale": text_scale,
+                            "color_rgb": color,
+                            "thickness_px": thickness,
+                            "antialiased": antialiased
+                        }
+
+        return draw_instruction
+    }
+
+
+    // Hard-code instructions
+    instructions_list = [
+                            {"snapshot_ems": 946684800125, "drawing": [polyline([[0, 0], [1, 1]]), 
+                                                                             polyline([[0, 1], [1, 0]], false, [0, 255, 0], 10)]},
+                            {"snapshot_ems": 946685000166, "drawing": [polyline([[0, 0.5], [1.0, 0.5], [0.5, 1.0]], true, [0, 0, 255]),
+                                                                             circle([0.5, 0.25], 0.04, [255, 0, 255], 4)]},
+                            {"snapshot_ems": 946685200207, "drawing": [polyline([[0, 0.5], [1.0, 0.5], [0.5, 1.0]], false, [0, 0, 255], -1),
+                                                                             circle([0.5, 0.25], 0.04, [255, 0, 255], -1)]},
+                            {"snapshot_ems": 946685399249, "drawing": []},
+                            {"snapshot_ems": 946685599165, "drawing": [rectangle([0, 0], [0.75, 0.75], [0, 255, 255], 5)]},
+                            {"snapshot_ems": 946685799206, "drawing": []},
+                            {"snapshot_ems": 946685999247, "drawing": [rectangle([0, 0], [0.1, 0.1], [0, 255, 255], 5),
+                                                                             rectangle([0.9, 0.9], [1, 1], [0, 255, 255], 3),
+                                                                             rectangle([0.0, 0.9], [0.1, 1], [0, 255, 255], 1),
+                                                                             rectangle([0.05, 0.8], [0.2, 0.95], [0, 255, 0], -1)]},
+                            {"snapshot_ems": 946686198164, "drawing": [text_msg("does this work?", [0.5,0.5])]},
+                            {"snapshot_ems": 946686398205, "drawing": [text_msg("Hello", [0, 0], 'left', 'top'),
+                                                                             text_msg("world?", [0, 0.2], 'left', 'top', 1.0, [255, 255, 0], 3, false)]},
+                            {"snapshot_ems": 946686598246, "drawing": []}
+                        ]
+
+    // Hard-code bundled post data
+    const camera_select = "";
+    const post_data = {
+                        "camera_select": camera_select,
+                        "frame_rate": 2,
+                        "frame_width_px": 480,
+                        "ghosting": {"enable": true, "pixelation_factor": 2, "blur_size": 1, "brightness_scaling": 2},
+                        "instructions": instructions_list
+                      }
+
+    const post_url = `http://localhost:7171/create-animation/from-instructions`;
+    fetch(post_url, {method: 'POST', body: JSON.stringify(post_data)})
+    .then(response => response.ok ? response.blob() : response.json())
+    .then(resp_data => resp_data instanceof Blob ? download(resp_data, "test_from_instructions.mp4", "video/mp4") : console.log(resp_data))
+
+</script>

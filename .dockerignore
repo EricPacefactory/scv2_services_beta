@@ -1,10 +1,10 @@
 
 # Project files
-Dockerfile*
+# ... nothing so far!
 
-# Git files
-.git
-.gitignore
+# Cache files
+**.pyc
+__pycache__
 
 # Large files (ex. videos and images)
 **.avi
@@ -13,8 +13,8 @@ Dockerfile*
 **.jpg
 **.jpeg
 **.png
-
-# Cache files
-**.pyc
-__pycache__
+**.log
+**.kra
+**.csv
+**.odp
 

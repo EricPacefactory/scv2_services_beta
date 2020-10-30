@@ -1,7 +1,20 @@
 
 # Project files
-# ...
+# ... nothing so far
 
 # Cache files
-*.pyc
+**.pyc
 __pycache__
+
+# Large files (ex. videos and images)
+**.avi
+**.mp4
+**.mov
+**.jpg
+**.jpeg
+**.png
+**.log
+**.kra
+**.csv
+**.odp
+

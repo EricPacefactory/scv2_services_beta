@@ -22,11 +22,15 @@ from local.lib.environment import using_spyder_ide, get_default_fps
 from local.lib.environment import get_gifserver_protocol, get_gifserver_host, get_gifserver_port
 from local.lib.environment import get_dbserver_protocol, get_dbserver_host, get_dbserver_port
 
+from local.lib.timekeeper_utils import datetime_to_isoformat_string
+
 from local.lib.request_helpers import connect_to_dbserver, check_server_connection, get_snapshot_ems_list
 from local.lib.response_helpers import json_response, error_response
 
 from local.lib.video_creation import create_video_simple_replay
 from local.lib.video_creation import create_video_from_instructions, create_video_response_from_b64_jpgs
+
+from local.eolib.utils.use_git import Git_Reader
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -46,6 +50,39 @@ def register_waitress_shutdown_command():
     signal.signal(signal.SIGTERM, convert_sigterm_to_keyboard_interrupt)
     
     return
+
+# .....................................................................................................................
+
+def check_git_version():
+    
+    ''' Helper function used to generate versioning info to be displayed on main web page '''
+    
+    # Initialize output in case of errors
+    is_valid = False
+    version_indicator_str = "unknown"
+    commit_date_str = "unknown"
+    
+    # Try to get versioning info    
+    try:
+        commit_id, commit_tags_list, commit_dt = GIT_READER.get_current_commit()
+        
+        # Use tag if possible to represent the version
+        version_indicator_str = ""
+        if len(commit_tags_list) > 0:
+            version_indicator_str = ", ".join(commit_tags_list)
+        else:
+            version_indicator_str = commit_id
+        
+        # Add time information
+        commit_date_str = commit_dt.strftime("%b %d")
+        
+        # If we get here, the info is probably good
+        is_valid = True
+        
+    except:
+        pass
+    
+    return is_valid, commit_date_str, version_indicator_str
 
 # .....................................................................................................................
 # .....................................................................................................................
@@ -73,10 +110,29 @@ CORS(wsgi_app)
 @wsgi_app.route("/")
 def home_route():
     
-    html_strs_list = ["<title>SCV2 GIF Wrapper</title>",
-                      "<h1>GIF Wrapper is running: <a href='/help'>Route listing</a></h1>"]
+    # For convenience
+    indent_by_2 = lambda message: "  {}".format(message)
     
-    return "\n".join(html_strs_list)
+    # Generate versioning info
+    version_is_valid, version_date_str, version_id_str = check_git_version()
+    bad_version_entry = "<p>error getting version info!</p>"
+    good_version_entry = "<p>version: {} ({})</p>".format(version_id_str, version_date_str)
+    git_version_str = (good_version_entry if version_is_valid else bad_version_entry)
+    
+    # Build html line-by-line
+    html_list = ["<!DOCTYPE html>",
+                 "<html>",
+                 "<head>",
+                 indent_by_2("<title>GIF Wrapper</title>"),
+                 indent_by_2("<link rel='icon' href='data:;base64,iVBORw0KGgo='>"),
+                 "</head>",
+                 "<body>",
+                 indent_by_2("<h1>GIF Wrapper is running: <a href='/help'>Route listing</a></h1>"),
+                 indent_by_2(git_version_str),
+                 "</body>",
+                 "</html>"]
+    
+    return "\n".join(html_list)
 
 # .....................................................................................................................
 
@@ -124,6 +180,29 @@ def help_route():
 
 # .....................................................................................................................
 
+@wsgi_app.route("/get-version-info")
+def get_server_version():
+    
+    ''' Route used to check the current version of the server (based on git repo details) '''
+    
+    try:
+        commit_id, commit_tags_list, commit_dt = GIT_READER.get_current_commit()
+        isoformat_datetime = datetime_to_isoformat_string(commit_dt)
+        
+    except Exception:
+        commit_id = "error"
+        commit_tags_list = []
+        isoformat_datetime = "error"
+    
+    # Bundle results for better return
+    return_result = {"commit_id": commit_id,
+                     "tags_list": commit_tags_list,
+                     "commit_datetime_isoformat": isoformat_datetime}
+    
+    return json_response(return_result, status_code = 200)
+
+# .....................................................................................................................
+
 @wsgi_app.route("/<string:camera_select>/simple-replay/<int:start_ems>/<int:end_ems>")
 def simple_replay_route(camera_select, start_ems, end_ems):
     
@@ -136,35 +215,6 @@ def simple_replay_route(camera_select, start_ems, end_ems):
     # Interpret ghosting flag
     enable_ghosting_str = flask_request.args.get("ghost", "true")
     enable_ghosting_bool = (enable_ghosting_str.lower() in {"1", "true", "on", "enable"})
-    
-    # Request snapshot timing info from dbserver
-    snap_ems_list = get_snapshot_ems_list(DBSERVER_URL, camera_select, start_ems, end_ems)
-    no_snapshots_to_download = (len(snap_ems_list) == 0)
-    if no_snapshots_to_download:
-        error_msg = "No snapshots in provided time range"
-        return error_response(error_msg, status_code = 400)
-    
-    # Make sure snapshot times are ordered!
-    snap_ems_list = sorted(snap_ems_list)
-    
-    return create_video_simple_replay(DBSERVER_URL, camera_select, snap_ems_list, enable_ghosting_bool)
-
-# .....................................................................................................................
-
-@wsgi_app.route("/<string:camera_select>/simple-replay/<string:file_ext>/<enable_ghosting>/<int:start_ems>/<int:end_ems>")
-def simple_replay_route_legacy_support(camera_select, file_ext, enable_ghosting, start_ems, end_ems):
-    
-    # Check dbserver connection, since we'll need it to get snapshot listing
-    dbserver_is_connected = check_server_connection(DBSERVER_URL, feedback_on_error = False)
-    if not dbserver_is_connected:
-        error_msg = "No connection to dbserver!"
-        return error_response(error_msg, status_code = 500)
-    
-    # Get ghosting setting from url
-    enable_ghosting_str = str(enable_ghosting)
-    enable_ghosting_bool = (enable_ghosting_str.lower() in {"1", "true", "on", "enable"})
-    
-    # Ignore file_ext... Only supporting mp4 for now
     
     # Request snapshot timing info from dbserver
     snap_ems_list = get_snapshot_ems_list(DBSERVER_URL, camera_select, start_ems, end_ems)
@@ -331,6 +381,13 @@ def create_animation_from_b64_jpgs_route():
 
 # .....................................................................................................................
 # .....................................................................................................................
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+#%% Set up globals
+
+# Set up git repo access
+GIT_READER = Git_Reader(None)
 
 
 # ---------------------------------------------------------------------------------------------------------------------

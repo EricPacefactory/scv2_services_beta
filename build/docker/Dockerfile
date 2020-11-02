@@ -1,8 +1,8 @@
 # -----------------------------------------------------------------------------
 #%% Base setup
 
-# Start with ubuntu-python base
-FROM pacefactory/scv2_ubuntupython_base:1.0.2
+# Start with Open-CV base
+FROM pacefactory/scv2_opencv_base:1.0.0
 
 
 # -----------------------------------------------------------------------------

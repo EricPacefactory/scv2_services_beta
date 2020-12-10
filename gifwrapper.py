@@ -30,6 +30,8 @@ from local.lib.response_helpers import json_response, error_response
 from local.lib.video_creation import create_video_simple_replay
 from local.lib.video_creation import create_video_from_instructions, create_video_response_from_b64_jpgs
 
+from local.lib.perspective_correction import check_valid_quad, calculate_perspective_correction_factors
+
 from local.eolib.utils.use_git import Git_Reader
 
 
@@ -378,6 +380,89 @@ def create_animation_from_b64_jpgs_route():
         return error_response(error_msg, status_code = 400)
     
     return create_video_response_from_b64_jpgs(b64_jpgs_list, frame_rate)
+
+# .....................................................................................................................
+
+@wsgi_app.route("/get-perspective-correction", methods = ["GET", "POST"])
+def get_perspective_correction_route():
+    
+    # If using a GET request, return some info for how to use POST route
+    if flask_request.method == "GET":
+        info_list = ["Use (as a POST request) to get perspective correction data",
+                     "Data is expected to be provided in JSON, in the following format:",
+                     "{",
+                     " 'input_quad': list of 4 xy-pairs",
+                     "}",
+                     "- Input quad is assumed to represent a shape that would be rectangular if not for perspective",
+                     "- Input quad points are expected to be in normalized units",
+                     "- The order of the quad points will affect the orientation of the output mapping",
+                     "  - Assumed to be provided as [top-left, top-right, bot-right, bot-left]",
+                     "- The warping will map these points to: (0, 0), (1, 0), (1, 1), (0, 1)",
+                     "",
+                     "This route will return two matrices, for mapping points in either direction",
+                     "- 'in_to_out_matrix' maps points from the input co-ords. to (warped) output co-ords.",
+                     "- 'out_to_in_matrix' maps (warped) outputs back to input co-ords.",
+                     "",
+                     "To use in-to-out mapping:",
+                     "Assume we have an input xy co-ordinate (xi, yi)",
+                     "Assume we have an in-to-out matrix:",
+                     "",
+                     "         [m11, m12, m13]",
+                     "  Mi2o = [m21, m22, m23]",
+                     "         [m31, m32, m33]",
+                     "",
+                     "Form intermediate values Nx, Ny and D, given by:",
+                     "",
+                     "  Nx = (m11 * xi) + (m12 * yi) + m13",
+                     "  Ny = (m21 * xi) + (m22 * yi) + m23",
+                     "   D = (m31 * xi) + (m32 * yi) + m33",
+                     "",
+                     "Note: This result is a matrix-vector multiplication using: Mi2o * [xi, yi, 1]^T",
+                     "The warped outputs (xo, yo) are then given by:",
+                     "",
+                     "  xo = Nx / D",
+                     "  yo = Ny / D",
+                     "",
+                     "The out-to-in matrix can be used in the same way to warp back to input co-ordinates!"]
+        return json_response(info_list, status_code = 200)
+    
+    # -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
+    
+    # If we get here, we're dealing with a POST request, make sure we got something...
+    post_data_dict = flask_request.get_json(force = True)
+    missing_data = (post_data_dict is None)
+    if missing_data:
+        error_msg = "Missing post data. Call this route as a GET request for more info"
+        return error_response(error_msg, status_code = 400)
+    
+    # Pull out correction request data information
+    input_quad = post_data_dict.get("input_quad", None)
+    
+    # Bail if the input quad draw is bad
+    in_quad_is_valid, error_msg = check_valid_quad(input_quad)
+    if not in_quad_is_valid:
+        return error_response(error_msg, status_code = 400)
+    
+    # Get perspective correction data
+    correction_is_valid = False
+    try:
+        correction_is_valid, in_to_out_warp_mat_as_list, out_to_in_warp_mat_as_list = \
+        calculate_perspective_correction_factors(input_quad)
+        
+    except (ValueError, TypeError, AttributeError) as err:
+        error_msg = "Unknown error calculating perspective matricies ({})".format(str(err))
+        return error_response(error_msg)
+    
+    # Bail on bad corrections
+    if not correction_is_valid:
+        error_msg = "Invalid perspective correction! Quad may not be possible to correct..."
+        return error_response(error_msg)
+    
+    # Bundle outputs if we get this far
+    return_result = {"in_to_out_matrix": in_to_out_warp_mat_as_list,
+                     "out_to_in_matrix": out_to_in_warp_mat_as_list}
+    
+    return json_response(return_result, status_code = 200)
 
 # .....................................................................................................................
 # .....................................................................................................................
